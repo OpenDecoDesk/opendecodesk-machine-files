@@ -175,7 +175,7 @@ class AppTests(unittest.TestCase):
         out = os.path.join(self.tmp.name, "diag.txt")
         with mock.patch.object(self.app_mod.messagebox, "showinfo") as info:
             app.save_diagnostics(out)
-            self.settle(app)
+            self.settle(app, timeout=60)  # the report runs a few system commands; CI machines can be slow
         with open(out, encoding="utf-8") as fh:
             text = fh.read()
         self.assertIn(f"OpenDecoDesk Machine Files {__version__}", text)

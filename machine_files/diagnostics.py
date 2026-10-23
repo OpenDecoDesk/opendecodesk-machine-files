@@ -104,6 +104,7 @@ def _firewall_rules_for_this_app(text, program):
 def system_report():
     """Version, system and network details as (title, text) sections."""
     exe = sys.executable
+    addresses = local_ipv4_addresses()
     sections = [("App", "\n".join([
         f"OpenDecoDesk Machine Files {__version__}",
         f"Built app: {'yes' if getattr(sys, 'frozen', False) else 'no (running from source)'}",
@@ -116,8 +117,8 @@ def system_report():
         f"Machine: {platform.machine()}",
         f"Host name: {socket.gethostname()}",
         f"Remote Desktop session: {_rdp_note()}",
-    ])), ("This computer's IPv4 addresses", "\n".join(local_ipv4_addresses()) or "(none found)"),
-        ("Where the scan is sent", "\n".join(["255.255.255.255"] + directed_broadcasts(local_ipv4_addresses())))]
+    ])), ("This computer's IPv4 addresses", "\n".join(addresses) or "(none found)"),
+        ("Where the scan is sent", "\n".join(["255.255.255.255"] + directed_broadcasts(addresses)))]
     if os.name == "nt":
         sections += [
             ("Network category (Windows: Public networks block the scan replies unless allowed)",

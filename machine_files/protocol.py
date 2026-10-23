@@ -20,6 +20,7 @@ import json
 import logging
 import math
 import socket
+import threading
 import time
 
 log = logging.getLogger("machine_files.protocol")
@@ -108,15 +109,32 @@ def parse_discovery_reply(data):
     return {"mac": mac, "firmware": _cstr(data, 19), "model": _cstr(data, 51) or "SmartStitch"}
 
 
+def _host_ipv4_addresses(timeout=1.0):
+    """The IPv4 addresses this computer's own name resolves to — every adapter's, on Windows. The
+    lookup can hang on a network with slow name service (macOS especially), so it gets `timeout`
+    seconds in a background thread; [] if it doesn't answer by then."""
+    result = []
+
+    def lookup():
+        try:
+            for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+                result.append(info[4][0])
+        except OSError:
+            pass
+
+    t = threading.Thread(target=lookup, daemon=True)
+    t.start()
+    t.join(timeout)
+    if t.is_alive():
+        log.warning("looking up this computer's own addresses took over %.0f s — skipped", timeout)
+        return []
+    return list(result)
+
+
 def local_ipv4_addresses():
     """This computer's IPv4 addresses (not loopback): every address the host name resolves to, and
     the one used to reach the internet (a UDP connect sends nothing)."""
-    found = []
-    try:
-        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
-            found.append(info[4][0])
-    except OSError:
-        pass
+    found = _host_ipv4_addresses()
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("192.0.2.1", 9))
