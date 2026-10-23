@@ -1,0 +1,281 @@
+"""
+The SmartStitch embroidery machines' LAN protocol — discovery, file listing, upload.
+
+These machines are NOT FTP servers. They speak two proprietary protocols, reverse-engineered from
+Wireshark captures of the vendor's own software (full reference: PROTOCOL.md):
+  - Discovery: a UDP broadcast to port 23 with a fixed 4-byte payload; each machine replies to
+    UDP port 60023 on the sender with its MAC, firmware and model.
+  - Everything else: framed TCP on port 6000. Every frame, in both directions, is
+        fa 01 <len16 LE = len(body)+1> <body> <lrc>
+    where <lrc> is the XOR of every byte before it.
+
+Reading a file back off a machine (machine -> computer) is not captured yet; download_file()
+raises NotSupportedYet until it is (PROTOCOL.md §8 says how to capture it).
+
+Standard library only. Every failure raises a RuntimeError whose message can be shown to the
+operator as-is.
+"""
+
+import json
+import logging
+import math
+import socket
+import time
+
+log = logging.getLogger("machine_files.protocol")
+
+# ---- Discovery (UDP) ---------------------------------------------------------------------
+UDP_BROADCAST_IP = "255.255.255.255"
+UDP_TARGET_PORT = 23      # the machines' discovery port
+UDP_LISTEN_PORT = 60023   # the machines reply to this port on the sender
+DISCOVERY_PAYLOAD = bytes.fromhex("ff 04 02 fb")
+DISCOVERY_WINDOW_SECONDS = 1.5
+
+# ---- File listing and transfers (TCP) ----------------------------------------------------
+TCP_PORT = 6000
+LIST_CONNECT_TIMEOUT_SECONDS = 2.0
+LIST_PAGE_READ_SECONDS = 2.0
+MAX_LIST_PAGES = 64  # ~14 files a page; listing stops early once the declared `num` files are in
+
+SEND_CONNECT_TIMEOUT_SECONDS = 3.0
+SEND_ACK_TIMEOUT_SECONDS = 6.0
+SEND_CHUNK_BYTES = 1024
+_ERROR_STATUS_BYTE = 0xC9  # seen in a cf22 status reply when the machine rejects a transfer
+
+
+class NotSupportedYet(RuntimeError):
+    """A machine operation whose frames haven't been captured yet."""
+
+
+DOWNLOAD_NOT_CAPTURED_MESSAGE = (
+    "Copying a file from the machine isn't supported yet: the command the vendor's app uses to "
+    "read a file back hasn't been captured. See PROTOCOL.md §8 for how to capture it.")
+
+
+def _lrc(frame_without_trailer):
+    """The trailing check byte on every frame: XOR of all preceding bytes."""
+    x = 0
+    for b in frame_without_trailer:
+        x ^= b
+    return x
+
+
+def _frame(body):
+    """Wrap a body in the protocol's envelope: fa 01 <len16 LE> <body> <lrc>."""
+    head = bytes([0xFA, 0x01]) + (len(body) + 1).to_bytes(2, "little") + body
+    return head + bytes([_lrc(head)])
+
+
+def _recv_frame(sock):
+    """Read one whole frame (fa 01 <len16> <body+lrc>). Returns the frame bytes, or None if the
+    machine sent nothing or an unparseable header."""
+    header = b""
+    while len(header) < 4:
+        chunk = sock.recv(4 - len(header))
+        if not chunk:
+            return None
+        header += chunk
+    if header[0] != 0xFA or header[1] != 0x01:
+        return None
+    remaining = header[2] | (header[3] << 8)
+    body = b""
+    while len(body) < remaining:
+        chunk = sock.recv(remaining - len(body))
+        if not chunk:
+            break
+        body += chunk
+    return header + body
+
+
+def _reply_is_error(frame):
+    """A cf22 status reply signals rejection with the error byte in its status slot."""
+    if not frame or len(frame) < 10:
+        return False
+    if frame[6:8] != bytes([0xCF, 0x22]):
+        return False
+    return _ERROR_STATUS_BYTE in frame[8:11]
+
+
+def _cstr(buf, start):
+    """A NUL-terminated ASCII string starting at `start` (the discovery reply's fields are
+    variable length, so they must never be sliced at a fixed end offset)."""
+    if start >= len(buf):
+        return ""
+    return buf[start:].split(b"\x00")[0].decode("utf-8", errors="ignore").strip()
+
+
+def parse_discovery_reply(data):
+    """MAC at bytes 9:15, firmware NUL-terminated from byte 19, model NUL-terminated from byte 51."""
+    mac = ":".join(f"{b:02X}" for b in data[9:15]) if len(data) >= 15 else ""
+    return {"mac": mac, "firmware": _cstr(data, 19), "model": _cstr(data, 51) or "SmartStitch"}
+
+
+def discover_machines(target_port=UDP_TARGET_PORT, listen_port=UDP_LISTEN_PORT,
+                      window_seconds=DISCOVERY_WINDOW_SECONDS, broadcast_ip=UDP_BROADCAST_IP):
+    """Broadcast the discovery payload and collect replies for `window_seconds`. Returns
+    [{ip, mac, model, firmware}], one per IP that answered. The port / address arguments exist
+    for the tests' stub machine; the defaults are the real values."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+    except (AttributeError, OSError):
+        pass  # not on every platform; SO_REUSEADDR is enough there
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    try:
+        sock.bind(("", listen_port))
+    except OSError as e:
+        sock.close()
+        raise RuntimeError(f"Could not listen for machine replies on UDP port {listen_port} "
+                           f"(is the vendor's app or another copy of this one open?): {e}")
+
+    machines = []
+    seen = set()
+    try:
+        try:
+            sock.sendto(DISCOVERY_PAYLOAD, (broadcast_ip, target_port))
+        except OSError as e:
+            raise RuntimeError(f"Could not send the machine scan on this network: {e}")
+        deadline = time.time() + window_seconds
+        while True:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                break
+            sock.settimeout(remaining)
+            try:
+                data, addr = sock.recvfrom(1024)
+            except socket.timeout:
+                break
+            if data == DISCOVERY_PAYLOAD or addr[0] in seen:
+                continue  # our own broadcast looping back, or a repeat
+            seen.add(addr[0])
+            machines.append({"ip": addr[0], **parse_discovery_reply(data)})
+    finally:
+        sock.close()
+    return machines
+
+
+def _build_list_command(page_num):
+    """The 11-byte frame requesting one page of the file listing."""
+    frame = [0xFA, 0x01, 0x07, 0x00, 0x01, 0x00, 0xCF, 0x21, page_num & 0xFF, 0x00]
+    return bytes(frame + [_lrc(frame)])
+
+
+def _connect(machine_ip, machine_port, timeout):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(timeout)
+    try:
+        sock.connect((machine_ip, machine_port))
+    except (socket.timeout, OSError) as e:
+        sock.close()
+        raise RuntimeError(f"Could not connect to the machine at {machine_ip}: {e}")
+    return sock
+
+
+def list_machine_dir(machine_ip, machine_port=TCP_PORT):
+    """The machine's files as [{name, size, modified}].
+
+    The machine returns ONE JSON document ({"num":N,"files":[{name,size,date}]}) split across
+    framed pages at arbitrary byte boundaries, so each page's 12-byte prefix and 1-byte trailing
+    LRC are dropped, the chunks joined, and the whole parsed once."""
+    sock = _connect(machine_ip, machine_port, LIST_CONNECT_TIMEOUT_SECONDS)
+    try:
+        time.sleep(0.15)  # the vendor app's pause between connect and the first command
+        sock.settimeout(LIST_PAGE_READ_SECONDS)
+        chunks = []
+        for page in range(1, MAX_LIST_PAGES + 1):
+            sock.sendall(_build_list_command(page))
+            try:
+                frame = _recv_frame(sock)
+            except socket.timeout:
+                break
+            if frame is None or len(frame) <= 13:  # header only = no more pages
+                break
+            chunks.append(frame[12:-1])
+            try:
+                parsed = json.loads(b"".join(chunks).decode("utf-8", errors="ignore"))
+                if len(parsed.get("files", [])) >= parsed.get("num", 0):
+                    break
+            except ValueError:
+                pass  # incomplete so far
+        if not chunks:
+            return []
+        try:
+            parsed = json.loads(b"".join(chunks).decode("utf-8", errors="ignore"))
+        except ValueError:
+            raise RuntimeError("The machine's file list came back incomplete — try again.")
+        return [{"name": f.get("name", ""), "size": f.get("size"), "modified": f.get("date")}
+                for f in parsed.get("files", [])]
+    except OSError as e:
+        raise RuntimeError(f"Lost the connection to the machine while listing its files: {e}")
+    finally:
+        sock.close()
+
+
+def send_design_to_machine(machine_ip, file_name, file_bytes, machine_port=TCP_PORT):
+    """Upload one design: register the filename (cf25, echoed back in a cf22), then stream the
+    bytes 1024 a block (cf23 <page16> <totalBlocks16> <bytes>). The machine cf22-acks every block
+    but the last; after the last it just commits. Returns {fileName, bytes, blocks}."""
+    try:
+        name_bytes = file_name.encode("ascii")
+    except UnicodeEncodeError:
+        raise RuntimeError(f"“{file_name}”: machine file names must be plain ASCII — rename the file.")
+    if not name_bytes:
+        raise RuntimeError("No file name to give the machine.")
+    if not file_bytes:
+        raise RuntimeError(f"“{file_name}” is empty.")
+
+    total = len(file_bytes)
+    total_blocks = math.ceil(total / SEND_CHUNK_BYTES)
+    log.info("send %s to %s:%s, %d bytes in %d blocks", file_name, machine_ip, machine_port,
+             total, total_blocks)
+
+    sock = _connect(machine_ip, machine_port, SEND_CONNECT_TIMEOUT_SECONDS)
+    try:
+        time.sleep(0.15)
+        sock.settimeout(SEND_ACK_TIMEOUT_SECONDS)
+
+        sock.sendall(_frame(bytes([0x01, 0x00, 0xCF, 0x25, 0x00]) + name_bytes))
+        ack = _recv_frame(sock)
+        if ack is None:
+            raise RuntimeError("The machine didn't acknowledge the file name. Make sure the "
+                               "vendor's app is closed and the machine is idle.")
+        if _reply_is_error(ack):
+            raise RuntimeError(f"The machine refused the file name “{file_name}”.")
+
+        total_field = total_blocks.to_bytes(2, "little")
+        for page in range(1, total_blocks + 1):
+            chunk = file_bytes[(page - 1) * SEND_CHUNK_BYTES:page * SEND_CHUNK_BYTES]
+            body = bytes([0x01, 0x00, 0xCF, 0x23]) + page.to_bytes(2, "little") + total_field + chunk
+            sock.sendall(_frame(body))
+            if page == total_blocks:
+                # No ack after the last block; look briefly only for an explicit refusal.
+                sock.settimeout(1.0)
+                try:
+                    tail = _recv_frame(sock)
+                except socket.timeout:
+                    tail = None
+                if _reply_is_error(tail):
+                    raise RuntimeError(f"The machine refused the last part of “{file_name}”.")
+                break
+            block_ack = _recv_frame(sock)
+            if block_ack is None:
+                raise RuntimeError(f"The transfer of “{file_name}” stalled after block {page}.")
+            if _reply_is_error(block_ack):
+                raise RuntimeError(f"The machine refused block {page} of “{file_name}”.")
+        return {"fileName": file_name, "bytes": total, "blocks": total_blocks}
+    except socket.timeout:
+        raise RuntimeError(f"Timed out waiting for the machine while sending “{file_name}”.")
+    except OSError as e:
+        raise RuntimeError(f"Lost the connection to the machine while sending “{file_name}”: {e}")
+    finally:
+        sock.close()
+
+
+def download_file(machine_ip, stored_name, machine_port=TCP_PORT):
+    """Read one file back off the machine. Returns {"bytes": data, "ext": "DST"} once the frames
+    are known — the extension is whatever format the machine hands back (it re-encodes uploads).
+
+    Not captured yet: fill this in from a Wireshark capture of the vendor's app copying a file
+    from the machine (PROTOCOL.md §8). Until then it refuses rather than guess at frames."""
+    raise NotSupportedYet(DOWNLOAD_NOT_CAPTURED_MESSAGE)

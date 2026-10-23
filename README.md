@@ -1,0 +1,77 @@
+# OpenDecoDesk Machine Files
+
+A small desktop app for copying embroidery designs between a folder on your computer and a
+**SmartStitch** embroidery machine on your network — no vendor software, no website, nothing to
+install besides the app itself.
+
+```
+┌ Folder ───────────────────┐               ┌ Machine ──────────────────────┐
+│ [/path/to/designs ] [▤]  │  ◀◀ Copy all   │ [1501ultra — 192.168.1.40 ▾][↻]│
+│ LOGO.DST                  │  ◀ Copy sel.   │ Slot  Name                      │
+│ NAME_CAP.DSB              │  Copy sel. ▶   │   12  LOGO                      │
+│                           │  Copy all ▶▶   │   13  CREST                     │
+└───────────────────────────┘               └───────────────────────────────┘
+```
+
+- **Left:** a folder (type a path and press Enter, or click the folder button). Only `.dst` and `.dsb` files are
+  listed.
+- **Right:** the machines found on the network (↻ scans again) and the files on the one picked —
+  its slot number and name.
+- **The four buttons:** copy everything, or just the selected files, in either direction. A file
+  that's already on the other side (same name, ignoring the extension and the machine's slot
+  number) is skipped, never overwritten.
+- It remembers the last folder and machine. The machine is remembered by its network card's MAC
+  address, so it's still picked when its IP address changes.
+
+### What works today
+| | |
+|---|---|
+| Finding machines (UDP scan) | ✅ |
+| Listing a machine's files | ✅ |
+| Copying files **to** a machine | ✅ |
+| Copying files **from** a machine | ⏳ the buttons are there, but the command the vendor's app uses to read a file back hasn't been captured yet — see [PROTOCOL.md §8](PROTOCOL.md) for how to capture it |
+| Deleting files on a machine | ❌ disabled in the machines' firmware ([PROTOCOL.md §6](PROTOCOL.md)); clear files at the touchscreen |
+
+Tested against the `1201plus` and `1501ultra` models. Close the vendor's own app while using this
+one — both listen on the same port for scan replies.
+
+## Download
+Builds for macOS and Windows come from GitHub Actions (Actions → CI → a run → Artifacts; a run is
+started by a `v*` tag or by hand with *Run workflow*):
+- **Windows:** `OpenDecoDesk Machine Files.exe` — one portable file, no install. Windows Firewall
+  will ask to allow it on private networks the first time it scans; allow it.
+- **macOS:** unzip `OpenDecoDesk-Machine-Files-macOS.zip`. The app isn't signed yet, so the first
+  time, right-click it → Open. macOS then asks to let it find devices on your local network; allow
+  it.
+
+## Run from source
+Python 3.9 or newer with Tk (standard library only — nothing to `pip install`):
+```bash
+python3 -m machine_files
+```
+On macOS with Homebrew's Python, Tk is a separate package (`brew install python-tk`); the
+python.org installer and `/usr/bin/python3` include it.
+
+## Tests
+```bash
+python3 -m unittest discover -s tests -t . -v
+```
+The protocol tests run against stub machines on loopback that speak the real frame shapes
+(`tests/stubs.py`); the window tests drive the real window with a fake machine and are skipped
+where Tk or a display isn't available.
+
+## Build the apps yourself
+```bash
+python3 -m pip install pyinstaller
+pyinstaller --noconfirm opendecodesk-machine-files.spec
+```
+
+## How it talks to the machines
+Discovery is a UDP broadcast to port 23; everything else is framed TCP on port 6000
+(`FA 01 <len> <body> <xor>`). [PROTOCOL.md](PROTOCOL.md) has the full, reverse-engineered
+reference; `machine_files/protocol.py` is the implementation.
+
+SmartStitch is the machine vendor's brand; this project isn't affiliated with or endorsed by them.
+
+## Licence
+[GNU AGPL-3.0](LICENSE).
