@@ -36,13 +36,12 @@ Tested against the `1201plus` and `1501ultra` models. Close the vendor's own app
 one — both listen on the same port for scan replies.
 
 ## Download
-Builds for macOS and Windows come from GitHub Actions (Actions → CI → a run → Artifacts; a run is
-started by a `v*` tag or by hand with *Run workflow*):
-- **Windows:** `OpenDecoDesk Machine Files.exe` — one portable file, no install. Windows Firewall
+From the [Releases](../../releases) page:
+- **Windows:** `OpenDecoDesk-Machine-Files-Windows.exe` — one portable file, no install. Windows Firewall
   will ask to allow it on private networks the first time it scans; allow it.
-- **macOS:** unzip `OpenDecoDesk-Machine-Files-macOS.zip`. The app isn't signed yet, so the first
-  time, right-click it → Open. macOS then asks to let it find devices on your local network; allow
-  it.
+- **macOS (Apple Silicon):** unzip `OpenDecoDesk-Machine-Files-macOS-AppleSilicon.zip`. The app isn't
+  signed yet, so the first time, right-click it → Open. macOS then asks to let it find devices on your
+  local network; allow it. On an Intel Mac, run it from source (below).
 
 ## Run from source
 Python 3.9 or newer with Tk (standard library only — nothing to `pip install`):
@@ -59,6 +58,10 @@ python3 -m unittest discover -s tests -t . -v
 The protocol tests run against stub machines on loopback that speak the real frame shapes
 (`tests/stubs.py`); the window tests drive the real window with a fake machine and are skipped
 where Tk or a display isn't available.
+
+## Making a release
+Push a tag like `v0.2.0` (and set the same version in `machine_files/__init__.py` and the spec file). CI
+runs the tests, builds both apps and publishes them as a release.
 
 ## Build the apps yourself
 ```bash

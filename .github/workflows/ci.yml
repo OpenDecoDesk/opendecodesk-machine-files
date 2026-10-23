@@ -41,10 +41,46 @@ jobs:
       - run: pyinstaller --noconfirm opendecodesk-machine-files.spec
       - name: Zip the macOS app
         if: runner.os == 'macOS'
-        run: cd dist && ditto -c -k --keepParent "OpenDecoDesk Machine Files.app" "OpenDecoDesk-Machine-Files-macOS.zip"
+        run: cd dist && ditto -c -k --keepParent "OpenDecoDesk Machine Files.app" "OpenDecoDesk-Machine-Files-macOS-AppleSilicon.zip"
       - uses: actions/upload-artifact@v4
         with:
           name: OpenDecoDesk-Machine-Files-${{ runner.os }}
           path: |
             dist/*.zip
             dist/*.exe
+
+  release:
+    # On a version tag: publish the two builds as a GitHub release. The only job that may write.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Name the downloads
+        run: |
+          mv "dist/OpenDecoDesk Machine Files.exe" dist/OpenDecoDesk-Machine-Files-Windows.exe
+          ls -l dist
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<'NOTES'
+          Copy embroidery designs between a folder on your computer and a SmartStitch embroidery machine on your network.
+
+          **Downloads**
+          - **Windows:** `OpenDecoDesk-Machine-Files-Windows.exe` — one portable file, nothing to install. Allow it through Windows Firewall on private networks when asked (the machine scan needs it).
+          - **macOS (Apple Silicon):** unzip `OpenDecoDesk-Machine-Files-macOS-AppleSilicon.zip`. The app isn't signed yet: the first time, right-click it → Open. Allow it to find devices on your local network when macOS asks. On an Intel Mac, run it from source (see the README).
+
+          **What it does:** scan for machines, list a machine's files (slot and name), copy files to the machine and copy files off it (saved as .DSB, the machine's own format), skipping files already there. It remembers the last folder and machine.
+
+          Close the machine vendor's own app while using this one. Deleting files on a machine isn't possible (disabled in the firmware).
+          NOTES
+          gh release create "$GITHUB_REF_NAME" \
+            dist/OpenDecoDesk-Machine-Files-Windows.exe \
+            dist/OpenDecoDesk-Machine-Files-macOS-AppleSilicon.zip \
+            --repo "$GITHUB_REPOSITORY" --title "OpenDecoDesk Machine Files $GITHUB_REF_NAME" --notes-file notes.md
