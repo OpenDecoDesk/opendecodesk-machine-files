@@ -33,7 +33,15 @@ install besides the app itself.
 | Copying files **from** a machine | ✅ saved as `.DSB` — the machine keeps every design in its own form (a DST-style header with Barudan stitch records), whatever was sent |
 | Deleting files on a machine | ❌ disabled in the machines' firmware ([PROTOCOL.md §6](PROTOCOL.md)); clear files at the touchscreen |
 
-Tested against the `1201plus` and `1501ultra` models. Close the vendor's own app while using this
+Tested against the `1201plus` and `1501ultra` models.
+
+### If no machines are found
+Click **Save diagnostics…** (bottom right) and send the file it saves. It holds the app's version, this
+computer's network addresses, where the scan was sent and what came back, and on Windows the network
+type (Public / Private), the firewall's state and any firewall rule for this app — nothing is sent
+anywhere by the app itself. The usual causes: Windows treats the network as **Public** or the firewall
+blocks the app (it must be allowed to receive on UDP port 60023), the computer isn't on the machines'
+network (e.g. a remote PC reached over Remote Desktop), or the vendor's app is open. Close the vendor's own app while using this
 one — both listen on the same port for scan replies.
 
 ## Download

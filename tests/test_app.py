@@ -165,6 +165,26 @@ class AppTests(unittest.TestCase):
             time.sleep(0.02)
         self.assertIn("AUTO.DST", app.local_files)
 
+    def test_save_diagnostics_writes_version_state_and_log(self):
+        from machine_files import __version__
+        app = self.make(FakeMachines([MACHINE_A]), watch_ms=0)
+        app.folder_var.set(self.folder)
+        app.load_folder()
+        self.assertTrue(any(w.cget("text") == f"v{__version__}" for w in app.diag_btn.master.winfo_children()
+                            if w.winfo_class() == "TLabel"), "the version shows beside the button")
+        out = os.path.join(self.tmp.name, "diag.txt")
+        with mock.patch.object(self.app_mod.messagebox, "showinfo") as info:
+            app.save_diagnostics(out)
+            self.settle(app)
+        with open(out, encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertIn(f"OpenDecoDesk Machine Files {__version__}", text)
+        self.assertIn("1201plus — 10.0.0.5", text)
+        self.assertIn(f"Folder shown: {self.folder} — 2 design file(s)", text)
+        self.assertIn("===== Log", text)
+        self.assertIn("Diagnostics saved", app.status_var.get())
+        self.assertTrue(info.called)
+
     def test_copy_all_to_machine_skips_what_is_there(self):
         fake = FakeMachines([MACHINE_A])
         fake.files[MACHINE_A["ip"]] = [{"name": "LOGO.001"}]

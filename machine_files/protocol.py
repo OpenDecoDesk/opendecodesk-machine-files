@@ -30,6 +30,7 @@ UDP_TARGET_PORT = 23      # the machines' discovery port
 UDP_LISTEN_PORT = 60023   # the machines reply to this port on the sender
 DISCOVERY_PAYLOAD = bytes.fromhex("ff 04 02 fb")
 DISCOVERY_WINDOW_SECONDS = 2.5  # 1.5 s occasionally missed a machine
+DISCOVERY_ROUNDS = 3            # the scan is sent this many times across the window: UDP can be lost (Wi-Fi)
 
 # ---- File listing and transfers (TCP) ----------------------------------------------------
 TCP_PORT = 6000
@@ -107,11 +108,55 @@ def parse_discovery_reply(data):
     return {"mac": mac, "firmware": _cstr(data, 19), "model": _cstr(data, 51) or "SmartStitch"}
 
 
+def local_ipv4_addresses():
+    """This computer's IPv4 addresses (not loopback): every address the host name resolves to, and
+    the one used to reach the internet (a UDP connect sends nothing)."""
+    found = []
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            found.append(info[4][0])
+    except OSError:
+        pass
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("192.0.2.1", 9))
+            found.append(s.getsockname()[0])
+    except OSError:
+        pass
+    out = []
+    for ip in found:
+        if not ip.startswith("127.") and ip not in out:
+            out.append(ip)
+    return out
+
+
+def directed_broadcasts(addresses):
+    """Each network's own broadcast address, taking every network as a /24 (192.168.0.20 →
+    192.168.0.255). Windows sends 255.255.255.255 out of ONE network adapter only — on a PC with
+    VPN, Hyper-V or Remote Desktop adapters that can be the wrong one — so the scan goes to these too.
+    Link-local (169.254.x.x) addresses are skipped."""
+    out = []
+    for ip in addresses:
+        parts = ip.split(".")
+        if len(parts) != 4 or ip.startswith("169.254."):
+            continue
+        b = ".".join(parts[:3] + ["255"])
+        if b not in out:
+            out.append(b)
+    return out
+
+
 def discover_machines(target_port=UDP_TARGET_PORT, listen_port=UDP_LISTEN_PORT,
                       window_seconds=DISCOVERY_WINDOW_SECONDS, broadcast_ip=UDP_BROADCAST_IP):
     """Broadcast the discovery payload and collect replies for `window_seconds`. Returns
     [{ip, mac, model, firmware}], one per IP that answered. The port / address arguments exist
-    for the tests' stub machine; the defaults are the real values."""
+    for the tests' stub machine; the defaults are the real values. With the default broadcast
+    address it also sends to each local network's own broadcast address (directed_broadcasts)."""
+    targets = [broadcast_ip]
+    if broadcast_ip == UDP_BROADCAST_IP:
+        addresses = local_ipv4_addresses()
+        log.info("scan: this computer's IPv4 addresses: %s", ", ".join(addresses) or "(none)")
+        targets += [b for b in directed_broadcasts(addresses) if b not in targets]
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
@@ -124,40 +169,73 @@ def discover_machines(target_port=UDP_TARGET_PORT, listen_port=UDP_LISTEN_PORT,
         # would end the scan; switch that off.
         try:
             sock.ioctl(socket.SIO_UDP_CONNRESET, False)
-        except OSError:
-            pass
+        except OSError as e:
+            log.warning("scan: couldn't switch off Windows' UDP connection-reset errors: %s", e)
     try:
         sock.bind(("", listen_port))
     except OSError as e:
         sock.close()
+        log.error("scan: can't listen on UDP port %s: %s", listen_port, e)
         raise RuntimeError(f"Could not listen for machine replies on UDP port {listen_port} "
                            f"(is the vendor's app or another copy of this one open?): {e}")
+    log.info("scan: listening on UDP %s:%s for %.1f s", *sock.getsockname()[:2], window_seconds)
 
     machines = []
     seen = set()
+    resets = ignored = 0
+    def send_round(n):
+        sent = 0
+        for target in targets:
+            try:
+                sock.sendto(DISCOVERY_PAYLOAD, (target, target_port))
+                sent += 1
+                log.info("scan: round %d sent to %s:%s", n, target, target_port)
+            except OSError as e:
+                log.warning("scan: round %d couldn't send to %s:%s: %s", n, target, target_port, e)
+        return sent
+
     try:
-        try:
-            sock.sendto(DISCOVERY_PAYLOAD, (broadcast_ip, target_port))
-        except OSError as e:
-            raise RuntimeError(f"Could not send the machine scan on this network: {e}")
-        deadline = time.time() + window_seconds
+        if not send_round(1):
+            raise RuntimeError("Could not send the machine scan on this network — see Save diagnostics.")
+        start = time.time()
+        deadline = start + window_seconds
+        resend_at = [start + window_seconds * k / DISCOVERY_ROUNDS for k in range(1, DISCOVERY_ROUNDS)]
         while True:
-            remaining = deadline - time.time()
+            now = time.time()
+            remaining = deadline - now
             if remaining <= 0:
                 break
-            sock.settimeout(remaining)
+            if resend_at and now >= resend_at[0]:
+                resend_at.pop(0)
+                send_round(DISCOVERY_ROUNDS - len(resend_at))
+                continue
+            sock.settimeout(max(0.01, min(remaining, (resend_at[0] - now) if resend_at else remaining)))
             try:
                 data, addr = sock.recvfrom(1024)
             except socket.timeout:
-                break
+                continue  # time for the next round, or the end of the window (checked above)
             except ConnectionResetError:
-                continue  # Windows' ICMP "port unreachable", if the switch above wasn't honoured
-            if data == DISCOVERY_PAYLOAD or addr[0] in seen:
-                continue  # our own broadcast looping back, or a repeat
+                resets += 1  # Windows' ICMP "port unreachable", if the switch above wasn't honoured
+                continue
+            if data == DISCOVERY_PAYLOAD:
+                ignored += 1
+                log.debug("scan: our own scan came back from %s (ignored)", addr[0])
+                continue
+            if addr[0] in seen:
+                continue
             seen.add(addr[0])
-            machines.append({"ip": addr[0], **parse_discovery_reply(data)})
+            info = parse_discovery_reply(data)
+            log.info("scan: reply from %s, %d bytes: model %s, MAC %s, firmware %s",
+                     addr[0], len(data), info["model"], info["mac"], info["firmware"])
+            machines.append({"ip": addr[0], **info})
     finally:
         sock.close()
+    log.info("scan: done — %d machine(s)%s%s", len(machines),
+             f", {resets} connection-reset error(s)" if resets else "",
+             f", {ignored} echo(es) of our own scan" if ignored else "")
+    if not machines:
+        log.warning("scan: no replies. Usual causes: the firewall blocks UDP %s coming in, the machines are on "
+                    "another network, or the vendor's app is open.", listen_port)
     return machines
 
 
@@ -174,6 +252,7 @@ def _connect(machine_ip, machine_port, timeout):
         sock.connect((machine_ip, machine_port))
     except (socket.timeout, OSError) as e:
         sock.close()
+        log.warning("connect to %s:%s failed: %s", machine_ip, machine_port, e)
         raise RuntimeError(f"Could not connect to the machine at {machine_ip}: {e}")
     return sock
 
@@ -184,6 +263,7 @@ def list_machine_dir(machine_ip, machine_port=TCP_PORT):
     The machine returns ONE JSON document ({"num":N,"files":[{name,size,date}]}) split across
     framed pages at arbitrary byte boundaries, so each page's 12-byte prefix and 1-byte trailing
     LRC are dropped, the chunks joined, and the whole parsed once."""
+    log.info("list: connecting to %s:%s", machine_ip, machine_port)
     sock = _connect(machine_ip, machine_port, LIST_CONNECT_TIMEOUT_SECONDS)
     try:
         time.sleep(0.15)  # the vendor app's pause between connect and the first command
@@ -205,14 +285,18 @@ def list_machine_dir(machine_ip, machine_port=TCP_PORT):
             except ValueError:
                 pass  # incomplete so far
         if not chunks:
+            log.info("list: %s has no files", machine_ip)
             return []
         try:
             parsed = json.loads(b"".join(chunks).decode("utf-8", errors="ignore"))
         except ValueError:
             raise RuntimeError("The machine's file list came back incomplete — try again.")
-        return [{"name": f.get("name", ""), "size": f.get("size"), "modified": f.get("date")}
-                for f in parsed.get("files", [])]
+        files = [{"name": f.get("name", ""), "size": f.get("size"), "modified": f.get("date")}
+                 for f in parsed.get("files", [])]
+        log.info("list: %s has %d file(s) (%d page(s))", machine_ip, len(files), len(chunks))
+        return files
     except OSError as e:
+        log.warning("list: connection to %s lost: %s", machine_ip, e)
         raise RuntimeError(f"Lost the connection to the machine while listing its files: {e}")
     finally:
         sock.close()
@@ -269,8 +353,13 @@ def send_design_to_machine(machine_ip, file_name, file_bytes, machine_port=TCP_P
                 raise RuntimeError(f"The transfer of “{file_name}” stalled after block {page}.")
             if _reply_is_error(block_ack):
                 raise RuntimeError(f"The machine refused block {page} of “{file_name}”.")
+        log.info("send: %s delivered (%d blocks)", file_name, total_blocks)
         return {"fileName": file_name, "bytes": total, "blocks": total_blocks}
+    except RuntimeError as e:
+        log.warning("send: %s failed: %s", file_name, e)
+        raise
     except socket.timeout:
+        log.warning("send: %s timed out", file_name)
         raise RuntimeError(f"Timed out waiting for the machine while sending “{file_name}”.")
     except OSError as e:
         raise RuntimeError(f"Lost the connection to the machine while sending “{file_name}”: {e}")
@@ -292,6 +381,7 @@ def download_file(machine_ip, stored_name, machine_port=TCP_PORT):
     if not name_bytes:
         raise RuntimeError("No file name to ask the machine for.")
 
+    log.info("read: asking %s:%s for %s", machine_ip, machine_port, stored_name)
     sock = _connect(machine_ip, machine_port, SEND_CONNECT_TIMEOUT_SECONDS)
     try:
         time.sleep(0.15)
@@ -322,8 +412,13 @@ def download_file(machine_ip, stored_name, machine_port=TCP_PORT):
             page += 1
         if not data:
             raise RuntimeError(f"The machine sent “{stored_name}” empty.")
+        log.info("read: %s — %d bytes in %d block(s)", stored_name, len(data), page)
         return {"bytes": bytes(data), "ext": DOWNLOAD_EXT}
+    except RuntimeError as e:
+        log.warning("read: %s failed: %s", stored_name, e)
+        raise
     except socket.timeout:
+        log.warning("read: %s timed out", stored_name)
         raise RuntimeError(f"Timed out waiting for the machine while copying “{stored_name}”.")
     except OSError as e:
         raise RuntimeError(f"Lost the connection to the machine while copying “{stored_name}”: {e}")

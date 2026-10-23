@@ -1,14 +1,20 @@
 """The window: a folder on the left, a machine on the right, four copy buttons between them."""
 
+import datetime
+import logging
 import os
 import queue
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+from . import __version__
+from . import diagnostics
 from . import files as fl
 from . import protocol
 from . import settings as st
+
+log = logging.getLogger("machine_files.app")
 
 APP_TITLE = "OpenDecoDesk Machine Files"
 WATCH_MS = 2000  # how often the folder is checked for new, changed or removed files
@@ -104,7 +110,12 @@ class App:
 
         self.status_var = tk.StringVar(value="")
         ttk.Label(outer, textvariable=self.status_var, anchor="w").grid(
-            row=2, column=0, columnspan=3, sticky="ew", pady=(8, 0))
+            row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        foot = ttk.Frame(outer)
+        foot.grid(row=2, column=2, sticky="e", pady=(8, 0))
+        ttk.Label(foot, text=f"v{__version__}", foreground="#777").grid(row=0, column=0, padx=(0, 8))
+        self.diag_btn = ttk.Button(foot, text="Save diagnostics…", command=self.save_diagnostics)
+        self.diag_btn.grid(row=0, column=1)
 
         for tree in (self.local_tree, self.machine_tree):
             tree.bind("<<TreeviewSelect>>", lambda e: self._update_buttons())
@@ -165,7 +176,55 @@ class App:
     def status(self, msg):
         self.status_var.set(msg)
 
+    # ---- diagnostics -----------------------------------------------------------------------
+    def _state_report(self):
+        """What the window is showing, for the diagnostics file."""
+        machines = "\n".join(f"  {self._machine_label(m)}  MAC {m.get('mac') or '?'}  firmware {m.get('firmware') or '?'}"
+                              for m in self.machines) or "  (none)"
+        return [("This window", "\n".join([
+            f"Folder shown: {self._shown_folder or '(none)'} — {len(self.local_files)} design file(s)",
+            f"Machines in the list:\n{machines}",
+            f"Machine picked: {self._machine_label(self.machine) if self.machine else '(none)'}",
+            f"Files listed on it: {len(self.machine_rows)}",
+            f"Status line: {self.status_var.get()}",
+        ]))]
+
+    def save_diagnostics(self, path=None):
+        """Asks where to save, then writes the version, system / network details and the recent log
+        to a text file the user can read and send on. `path` skips the question (tests)."""
+        if self.busy:
+            return
+        if path is None:
+            desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+            path = filedialog.asksaveasfilename(
+                parent=self.root, title="Save diagnostics", defaultextension=".txt",
+                initialdir=desktop if os.path.isdir(desktop) else os.path.expanduser("~"),
+                initialfile=f"machine-files-diagnostics-{datetime.datetime.now():%Y%m%d-%H%M}.txt",
+                filetypes=[("Text file", "*.txt")])
+            if not path:
+                return
+        log.info("diagnostics: saving to %s", path)
+        state = self._state_report()
+        self.status("Collecting diagnostics…")
+
+        def work(progress):
+            text = diagnostics.build_report(state)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            return path
+
+        def done(saved, error):
+            if error:
+                self._error("Save diagnostics", error)
+            else:
+                self.status(f"Diagnostics saved to {saved}")
+                messagebox.showinfo(APP_TITLE, f"Saved to:\n{saved}\n\nOpen it to check what's in it, then send it on.",
+                                    parent=self.root)
+
+        self._run(work, done)
+
     def _error(self, title, error):
+        log.warning("%s: %s", title, error)
         self.status(str(error))
         messagebox.showerror(title, str(error), parent=self.root)
 
@@ -181,6 +240,7 @@ class App:
         """Show the folder typed or picked (and remember it)."""
         folder = self.folder_var.get().strip()
         if self._read_folder(folder) and folder:
+            log.info("folder: %s (%d design files)", folder, len(self.local_files))
             self.settings["lastFolder"] = folder
             self._save_settings()
             self.status(f"{len(self.local_files)} design file(s) in the folder.")
@@ -237,6 +297,7 @@ class App:
 
         def done(found, error):
             if error:
+                log.warning("scan failed: %s", error)
                 self.status(f"Machine scan failed: {error}")
                 found = []
             self._set_machines(found or [], remembered=self.settings.get("lastMachine"))
@@ -246,6 +307,8 @@ class App:
     def _set_machines(self, found, remembered=None):
         """Fill the picker. The remembered machine is matched by MAC (its IP can change); if it
         wasn't found, it's still offered at its last address so listing can be tried."""
+        log.info("machines found: %s; remembered: %s", [f"{m.get('model')} {m.get('ip')}" for m in found],
+                 f"{remembered.get('model')} {remembered.get('ip')} {remembered.get('mac')}" if remembered else "none")
         self.machines = sorted(found, key=lambda m: (m.get("model", ""), m.get("ip", "")))
         pick = None
         if remembered:
@@ -278,6 +341,7 @@ class App:
         return label + " (last seen)" if m.get("lastSeen") else label
 
     def _machine_picked(self):
+        log.info("machine picked: %s", self.machine_combo.get())
         i = self.machine_combo.current()
         if i < 0 or i >= len(self.machines):
             return
@@ -295,6 +359,7 @@ class App:
         def done(listing, error):
             if error:
                 self._show_machine_files([])
+                log.warning("listing %s failed: %s", ip, error)
                 self.status(f"Couldn't list the machine's files: {error}")
             else:
                 self._show_machine_files(listing)
@@ -349,6 +414,7 @@ class App:
             return
         folder = self.folder_var.get().strip()
         ip = self.machine["ip"]
+        log.info("copy to machine %s: %d file(s), %d already there", ip, len(to_send), len(skipped))
         note = f"\n\n{len(skipped)} already on the machine will be skipped." if skipped else ""
         if not messagebox.askyesno(APP_TITLE, f"Copy {len(to_send)} file(s) to "
                                    f"{self._machine_label(self.machine)}?{note}", parent=self.root):
@@ -396,6 +462,7 @@ class App:
             self.status(f"Nothing to copy — {len(skipped)} file(s) already in the folder.")
             return
         ip = self.machine["ip"]
+        log.info("copy from machine %s: %d file(s), %d already in the folder", ip, len(to_copy), len(skipped))
 
         def work(progress):
             saved, taken = [], []
@@ -449,6 +516,7 @@ def _folder_icon(root):
 
 
 def main():
+    diagnostics.setup()
     root = tk.Tk()
     App(root)
     root.mainloop()
