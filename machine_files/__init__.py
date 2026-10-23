@@ -1,3 +1,3 @@
 """OpenDecoDesk Machine Files — copy embroidery designs between a folder and a SmartStitch machine."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
