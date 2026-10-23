@@ -29,7 +29,7 @@ install besides the app itself.
 | Finding machines (UDP scan) | ✅ |
 | Listing a machine's files | ✅ |
 | Copying files **to** a machine | ✅ |
-| Copying files **from** a machine | ⏳ the buttons are there, but the command the vendor's app uses to read a file back hasn't been captured yet — see [PROTOCOL.md §8](PROTOCOL.md) for how to capture it |
+| Copying files **from** a machine | ✅ saved as `.DSB` — the machine keeps every design in its own form (a DST-style header with Barudan stitch records), whatever was sent |
 | Deleting files on a machine | ❌ disabled in the machines' firmware ([PROTOCOL.md §6](PROTOCOL.md)); clear files at the touchscreen |
 
 Tested against the `1201plus` and `1501ultra` models. Close the vendor's own app while using this

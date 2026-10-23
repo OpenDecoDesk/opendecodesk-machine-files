@@ -8,7 +8,7 @@ the same frame shapes.
 
 **These are NOT FTP servers.** An early build assumed FTP on port 21 — wrong hardware model. They
 speak two proprietary protocols: UDP discovery on port 23, and a framed TCP request/response
-protocol on port 6000 for listing files and uploading designs.
+protocol on port 6000 for listing files, uploading designs and reading them back.
 
 ---
 
@@ -134,8 +134,8 @@ See `send_design_to_machine`.
 | Op   | Dir | Name / body                                   | Status                  |
 |------|-----|-----------------------------------------------|-------------------------|
 | `21` | →   | request file-list page (`… CF 21 page8 00`)   | known, used             |
-| `22` | ←   | ack / status / echo                           | known (reply)           |
-| `23` | →   | data block (`… CF 23 page16 total16 <bytes>`) | known, used             |
+| `22` | ↔   | ack / status / echo; host → machine `… CF 22 01 00 00 <name>` = **read a file** (§8) | known, used |
+| `23` | ↔   | data block (`… CF 23 page16 total16 <bytes>`), both directions | known, used |
 | `24` | →   | **recognized but DISABLED** (`… CF 24 00 <param>`) → always `CF E0`. The one unused slot in the file-management cluster; almost certainly the delete/file-management op the vendor app doesn't expose. See §6 below. | **found, stubbed** |
 | `25` | →   | register filename (`… CF 25 00 <name>`)       | known, used             |
 | `26` | ←   | file-list page response                       | known (reply)           |
@@ -190,37 +190,33 @@ Data block:    FA 01 <len> 01 00 CF 23 <page16> <total16> <≤1024 bytes> <lrc>
 Block ack:     FA 01 <len> 01 00 CF 22 <page+1 & FF> 00 <lrc>   (none after the last block)
 Delete:        CF 24 exists but is DISABLED on this firmware — FA 01 <len> 01 00 CF 24 00 <param>
                always returns CF E0 (recognized, refused) for any param. See §6.
-Read a file:   not captured yet. See §8.
+Read request:  FA 01 <len> 01 00 CF 22 01 00 00 <stored name UTF-8> <lrc>
+Read block:    FA 01 <len> 01 00 CF 23 <page16> <total16> <≤1024 bytes> <lrc>   (machine → host)
+Read ack:      FA 01 07 00 01 00 CF 22 <page+1 16> <lrc>   (none after the last block)
 ```
 
-## 8. Reading a file back (machine → computer) — not captured yet
+## 8. Reading a file back (machine → computer) — implemented, verified
 
-The vendor's app can copy a design off a machine, so the protocol has a way to do it, but no
-capture of it has been decoded yet. `download_file()` in `machine_files/protocol.py` raises
-`NotSupportedYet` until it has; the app's two "copy from machine" buttons already go through it,
-so filling in that one function is all that's needed.
+Decoded from a capture of the vendor's app copying `<name>.002` off a `1501ultra`, then checked by
+reading the same file with `download_file()`: byte-for-byte identical. It is the upload (§4) run
+in reverse, on the same port-6000 connection type.
 
-### Capturing it
-1. Put a computer running Wireshark on the same network as the machine (the computer running the
-   vendor's app is easiest). Close this app so only the vendor's app talks to the machine.
-2. Start a capture with the display filter `tcp.port == 6000 && ip.addr == <machine IP>`.
-3. In the vendor's app, copy **one small file** from the machine to the computer. Note its name as
-   the machine lists it (e.g. `LOGO.012`) and save the copy it makes.
-4. Stop the capture, then *Follow → TCP Stream*, show the data as hex, and save it (or save the
-   `.pcapng`).
-
-### What to look for
-- Every frame should still be `FA 01 <len16> <body> <lrc>` with bodies starting `01 00 CF <op>`.
-- The **request**: probably one frame naming the file — maybe by its stored name, like the `CF 25`
-  registration (`… CF <op> 00 <name ASCII>`), maybe by its place in the list. Note the opcode; it
-  is likely one not in the map above. (The `CF 24` probe sent names in that shape and only `CF 24`
-  answered, so the read may take a different argument, e.g. a slot number.)
-- The **reply**: probably data pages shaped like the upload's `CF 23` — a page number, a total
-  block count, then up to 1024 bytes — with the computer acking each page the way the machine
-  acks an upload (`CF 22 <page+1> 00`). Check whether the last page is acked.
-- Compare the bytes that arrived with the file the vendor's app saved: is it the original design,
-  or the machine's re-encoded internal form (a 2.4 KB upload was listed at 346 bytes), and which
-  extension did the app give it?
-
-`download_file()` should then return `{"bytes": <data>, "ext": "<extension to save it under>"}`;
-add a receiving stub to `tests/stubs.py` built from the capture.
+```
+host → machine:  body = 01 00 CF 22 01 00 00 <stored name>        (read request)
+machine → host:  body = 01 00 CF 23 <page16 LE> <totalBlocks16 LE> <up to 1024 file bytes>
+host → machine:  body = 01 00 CF 22 <page+1 16 LE>                (ack: "ready for the next")
+… repeated; the host sends NO ack after the last block.
+```
+- The request names the file **exactly as the listing shows it**, sequence number included
+  (`LOGO.012`). It has the same shape as the machine's reply to an upload registration
+  (`CF 22 01 00 00 <name>`). Names are sent as UTF-8, like the listing JSON; a non-ASCII name
+  (`马头机~1.008`) reads fine.
+- In the capture the vendor app listed the files first on the same connection, but a read on a
+  fresh connection works too.
+- The data is the machine's **stored form**: a 512-byte DST-style header (`LA:`, `ST:`, `CO:`,
+  `+X:` …) followed by Barudan (`.DSB`) stitch records — whatever format was uploaded. Its size is
+  exactly `512 + 3 × (ST − 1)` (4079 stitches → 12,746 bytes). It is **not** the listed `size`
+  (the listing said 16,698 for that file). Save it as `.DSB`.
+- An unknown name is expected to get a `CF E0`/`CF E1` refusal (not seen in a capture);
+  `download_file()` treats any non-`CF 23` reply as a refusal and checks every block's page
+  number, block count and LRC.

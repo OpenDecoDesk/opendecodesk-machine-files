@@ -165,3 +165,38 @@ class StubReceivingMachine(_TcpStub):
                 self.received += f[12:-1]
                 if page < total:
                     conn.sendall(frame(bytes([0x01, 0x00, 0xCF, 0x22, (page + 1) & 0xFF, 0x00])))
+
+
+class StubSendingMachine(_TcpStub):
+    """Sends a file back the way the real machine does: on 01 00 cf 22 01 00 00 <name> it streams
+    cf23 blocks (page16, total16, ≤1024 bytes) and waits for the computer's cf22 <page+1> ack
+    before each next block. An unknown name gets cf e0. `corrupt_page` breaks one block's LRC."""
+
+    def __init__(self, files, corrupt_page=None):
+        self.files = files
+        self.corrupt_page = corrupt_page
+        self.requested = None
+        self.acks = []
+        super().__init__()
+
+    def handle(self, conn):
+        f = read_frame(conn)
+        if not f or f[6:11] != bytes([0xCF, 0x22, 0x01, 0x00, 0x00]):
+            return
+        self.requested = f[11:-1].decode("utf-8")
+        data = self.files.get(self.requested)
+        if data is None:
+            conn.sendall(frame(bytes([0x01, 0x00, 0xCF, 0xE0])))
+            return
+        total = (len(data) + 1023) // 1024
+        for page in range(1, total + 1):
+            out = frame(bytes([0x01, 0x00, 0xCF, 0x23]) + page.to_bytes(2, "little")
+                        + total.to_bytes(2, "little") + data[(page - 1) * 1024:page * 1024])
+            if page == self.corrupt_page:
+                out = out[:-1] + bytes([out[-1] ^ 0xFF])
+            conn.sendall(out)
+            if page < total:
+                ack = read_frame(conn)
+                if not ack:
+                    return
+                self.acks.append(ack[6:-1].hex())

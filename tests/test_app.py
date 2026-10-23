@@ -21,8 +21,6 @@ MACHINE_B = {"ip": "10.0.0.9", "mac": "AA:AA:AA:AA:AA:02", "model": "1501ultra",
 
 
 class FakeMachines:
-    NotSupportedYet = protocol.NotSupportedYet
-
     def __init__(self, found):
         self.found = found
         self.files = {m["ip"]: [] for m in found}
@@ -40,7 +38,9 @@ class FakeMachines:
         listing.append({"name": f"{name.rsplit('.', 1)[0]}.{len(listing) + 1:03d}", "size": len(data)})
 
     def download_file(self, ip, stored):
-        return protocol.download_file(ip, stored)
+        if stored.startswith("BROKEN"):
+            raise RuntimeError(f"The machine refused to send “{stored}”.")
+        return {"bytes": b"LA:" + stored.encode(), "ext": "DSB"}
 
 
 @unittest.skipUnless(HAVE_TK, "Tk or a display isn't available")
@@ -120,16 +120,33 @@ class AppTests(unittest.TestCase):
         self.assertEqual(len(app.machine_rows), 2)  # re-read after sending
         self.assertIn("Copied 1 file", app.status_var.get())
 
-    def test_copy_from_machine_reports_not_captured(self):
+    def test_copy_all_from_machine_saves_dsb_and_skips_what_is_there(self):
         fake = FakeMachines([MACHINE_A])
-        fake.files[MACHINE_A["ip"]] = [{"name": "NEW.003"}]
+        fake.files[MACHINE_A["ip"]] = [{"name": "LOGO.001"}, {"name": "NEW DESIGN.003"},
+                                        {"name": "马头机~1.008"}]
+        app = self.make(fake)
+        app.folder_var.set(self.folder)
+        app.load_folder()
+        app.copy_all_from_machine()
+        self.settle(app)
+        self.assertEqual(sorted(os.listdir(self.folder)),
+                         ["CAP.dsb", "LOGO.DST", "NEW DESIGN.DSB", "readme.txt", "马头机~1.DSB"])
+        with open(os.path.join(self.folder, "NEW DESIGN.DSB"), "rb") as fh:
+            self.assertEqual(fh.read(), b"LA:NEW DESIGN.003")
+        self.assertIn("Copied 2 file", app.status_var.get())
+        self.assertIn("1 already there", app.status_var.get())
+        self.assertIn("NEW DESIGN.DSB", app.local_files)  # the folder list was re-read
+
+    def test_copy_from_machine_reports_a_refusal(self):
+        fake = FakeMachines([MACHINE_A])
+        fake.files[MACHINE_A["ip"]] = [{"name": "BROKEN.004"}]
         app = self.make(fake)
         app.folder_var.set(self.folder)
         app.load_folder()
         with mock.patch.object(self.app_mod.messagebox, "showerror") as err:
             app.copy_all_from_machine()
             self.settle(app)
-        self.assertIn("isn't supported yet", err.call_args[0][1])
+        self.assertIn("refused to send", err.call_args[0][1])
         self.assertEqual(sorted(os.listdir(self.folder)), ["CAP.dsb", "LOGO.DST", "readme.txt"])
 
     def test_remembers_folder_and_machine_by_mac(self):

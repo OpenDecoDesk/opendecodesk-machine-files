@@ -9,8 +9,8 @@ Wireshark captures of the vendor's own software (full reference: PROTOCOL.md):
         fa 01 <len16 LE = len(body)+1> <body> <lrc>
     where <lrc> is the XOR of every byte before it.
 
-Reading a file back off a machine (machine -> computer) is not captured yet; download_file()
-raises NotSupportedYet until it is (PROTOCOL.md §8 says how to capture it).
+Reading a file back (download_file) is the upload run in reverse: the computer names the file
+in a cf22 frame and the machine streams it in cf23 blocks, which the computer acks.
 
 Standard library only. Every failure raises a RuntimeError whose message can be shown to the
 operator as-is.
@@ -29,7 +29,7 @@ UDP_BROADCAST_IP = "255.255.255.255"
 UDP_TARGET_PORT = 23      # the machines' discovery port
 UDP_LISTEN_PORT = 60023   # the machines reply to this port on the sender
 DISCOVERY_PAYLOAD = bytes.fromhex("ff 04 02 fb")
-DISCOVERY_WINDOW_SECONDS = 1.5
+DISCOVERY_WINDOW_SECONDS = 2.5  # 1.5 s occasionally missed a machine
 
 # ---- File listing and transfers (TCP) ----------------------------------------------------
 TCP_PORT = 6000
@@ -43,13 +43,10 @@ SEND_CHUNK_BYTES = 1024
 _ERROR_STATUS_BYTE = 0xC9  # seen in a cf22 status reply when the machine rejects a transfer
 
 
-class NotSupportedYet(RuntimeError):
-    """A machine operation whose frames haven't been captured yet."""
-
-
-DOWNLOAD_NOT_CAPTURED_MESSAGE = (
-    "Copying a file from the machine isn't supported yet: the command the vendor's app uses to "
-    "read a file back hasn't been captured. See PROTOCOL.md §8 for how to capture it.")
+# Files come back in the machine's own stored form: a DST-style header followed by Barudan
+# (.DSB) stitch records, whatever format was uploaded.
+DOWNLOAD_EXT = "DSB"
+MAX_DOWNLOAD_BLOCKS = 20 * 1024  # 20 MB at 1024 bytes a block; far above any real design
 
 
 def _lrc(frame_without_trailer):
@@ -282,9 +279,53 @@ def send_design_to_machine(machine_ip, file_name, file_bytes, machine_port=TCP_P
 
 
 def download_file(machine_ip, stored_name, machine_port=TCP_PORT):
-    """Read one file back off the machine. Returns {"bytes": data, "ext": "DST"} once the frames
-    are known — the extension is whatever format the machine hands back (it re-encodes uploads).
+    """Read one file back off the machine by the name it lists (e.g. "LOGO.012").
 
-    Not captured yet: fill this in from a Wireshark capture of the vendor's app copying a file
-    from the machine (PROTOCOL.md §8). Until then it refuses rather than guess at frames."""
-    raise NotSupportedYet(DOWNLOAD_NOT_CAPTURED_MESSAGE)
+    Request: body 01 00 cf 22 01 00 00 <stored name> (the shape of the machine's reply to an
+    upload registration). The machine answers with cf23 blocks 01 00 cf 23 <page16> <total16>
+    <up to 1024 bytes>, pages from 1; the computer acks each with 01 00 cf 22 <page+1 16>, except
+    the last. Returns {"bytes": data, "ext": "DSB"}."""
+    try:
+        name_bytes = stored_name.encode("utf-8")  # the listing JSON is UTF-8
+    except UnicodeEncodeError:
+        raise RuntimeError(f"Can't ask the machine for “{stored_name}”.")
+    if not name_bytes:
+        raise RuntimeError("No file name to ask the machine for.")
+
+    sock = _connect(machine_ip, machine_port, SEND_CONNECT_TIMEOUT_SECONDS)
+    try:
+        time.sleep(0.15)
+        sock.settimeout(SEND_ACK_TIMEOUT_SECONDS)
+        sock.sendall(_frame(bytes([0x01, 0x00, 0xCF, 0x22, 0x01, 0x00, 0x00]) + name_bytes))
+
+        data = bytearray()
+        page = 1
+        while True:
+            frame = _recv_frame(sock)
+            if frame is None:
+                if page == 1:
+                    raise RuntimeError(f"The machine didn't send “{stored_name}”. Make sure the "
+                                       "vendor's app is closed and the machine is idle.")
+                raise RuntimeError(f"The machine stopped sending “{stored_name}” after block {page - 1}.")
+            if len(frame) < 13 or frame[6:8] != bytes([0xCF, 0x23]):
+                raise RuntimeError(f"The machine refused to send “{stored_name}”.")
+            if _lrc(frame[:-1]) != frame[-1]:
+                raise RuntimeError(f"Block {page} of “{stored_name}” arrived damaged — try again.")
+            got_page = frame[8] | (frame[9] << 8)
+            total = frame[10] | (frame[11] << 8)
+            if got_page != page or not 1 <= total <= MAX_DOWNLOAD_BLOCKS:
+                raise RuntimeError(f"The machine sent “{stored_name}” out of order — try again.")
+            data += frame[12:-1]
+            if page >= total:
+                break
+            sock.sendall(_frame(bytes([0x01, 0x00, 0xCF, 0x22]) + (page + 1).to_bytes(2, "little")))
+            page += 1
+        if not data:
+            raise RuntimeError(f"The machine sent “{stored_name}” empty.")
+        return {"bytes": bytes(data), "ext": DOWNLOAD_EXT}
+    except socket.timeout:
+        raise RuntimeError(f"Timed out waiting for the machine while copying “{stored_name}”.")
+    except OSError as e:
+        raise RuntimeError(f"Lost the connection to the machine while copying “{stored_name}”: {e}")
+    finally:
+        sock.close()

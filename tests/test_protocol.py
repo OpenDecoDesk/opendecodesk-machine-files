@@ -2,7 +2,8 @@ import socket
 import unittest
 
 from machine_files import protocol
-from tests.stubs import (StubDiscoveryMachine, StubListingMachine, StubReceivingMachine, lrc)
+from tests.stubs import (StubDiscoveryMachine, StubListingMachine, StubReceivingMachine,
+                         StubSendingMachine, lrc)
 
 
 def free_udp_port():
@@ -125,11 +126,45 @@ class SendTests(unittest.TestCase):
 
 
 class DownloadTests(unittest.TestCase):
-    def test_not_captured_yet(self):
-        with self.assertRaises(protocol.NotSupportedYet) as ctx:
-            protocol.download_file("127.0.0.1", "LOGO.012")
-        self.assertIn("PROTOCOL.md", str(ctx.exception))
-        self.assertIsInstance(ctx.exception, RuntimeError)
+    DESIGN = b"LA:sample" + bytes(503) + bytes((i * 11) % 256 for i in range(12234))  # 12746 B, 13 blocks
+
+    def _read(self, name, files=None, **stub_args):
+        stub = StubSendingMachine(files if files is not None else {"Sample Patch.002": self.DESIGN},
+                                  **stub_args)
+        try:
+            return stub, protocol.download_file("127.0.0.1", name, machine_port=stub.port)
+        finally:
+            stub.stop()
+
+    def test_reads_every_block_and_acks_all_but_the_last(self):
+        stub, got = self._read("Sample Patch.002")
+        self.assertEqual(got, {"bytes": self.DESIGN, "ext": "DSB"})
+        self.assertEqual(stub.requested, "Sample Patch.002")
+        # cf22 <page+1 LE16> after blocks 1..12, nothing after block 13 (as in the capture)
+        self.assertEqual(stub.acks, ["cf22" + (p + 1).to_bytes(2, "little").hex() for p in range(1, 13)])
+
+    def test_request_frame_shape(self):
+        # As captured from the vendor's app: fa 01 <len> 01 00 cf 22 01 00 00 <stored name> <lrc>.
+        name = b"Sample Patch.002"
+        f = protocol._frame(bytes([0x01, 0x00, 0xCF, 0x22, 0x01, 0x00, 0x00]) + name)
+        self.assertEqual(f[:11].hex(), "fa01" + (len(name) + 8).to_bytes(2, "little").hex() + "0100cf22010000")
+        self.assertEqual(f[-1], lrc(f[:-1]))
+
+    def test_single_block_and_non_ascii_names(self):
+        stub, got = self._read("马头机~1.008", files={"马头机~1.008": b"LA:x" + bytes(600)})
+        self.assertEqual(len(got["bytes"]), 604)
+        self.assertEqual(stub.requested, "马头机~1.008")
+        self.assertEqual(stub.acks, [])
+
+    def test_unknown_file_is_refused(self):
+        with self.assertRaises(RuntimeError) as ctx:
+            self._read("Missing.009")
+        self.assertIn("refused to send", str(ctx.exception))
+
+    def test_damaged_block_is_reported(self):
+        with self.assertRaises(RuntimeError) as ctx:
+            self._read("Sample Patch.002", corrupt_page=4)
+        self.assertIn("Block 4", str(ctx.exception))
 
 
 if __name__ == "__main__":
