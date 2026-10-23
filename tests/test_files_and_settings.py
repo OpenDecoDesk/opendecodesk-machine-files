@@ -16,6 +16,31 @@ class FolderListingTests(unittest.TestCase):
             self.assertEqual(fl.list_design_files(d), ["A.dsb", "b.DST", "d.Dst"])
 
 
+class FolderSignatureTests(unittest.TestCase):
+    def test_changes_when_a_design_file_is_added_replaced_or_removed(self):
+        with tempfile.TemporaryDirectory() as d:
+            sig0 = fl.folder_signature(d)
+            with open(os.path.join(d, "A.DST"), "wb") as fh:
+                fh.write(b"x")
+            sig1 = fl.folder_signature(d)
+            self.assertNotEqual(sig0, sig1)
+            self.assertEqual(sig1, fl.folder_signature(d))  # nothing changed, same value
+            with open(os.path.join(d, "A.DST"), "wb") as fh:
+                fh.write(b"longer")  # same name, new content (size differs)
+            sig2 = fl.folder_signature(d)
+            self.assertNotEqual(sig1, sig2)
+            os.remove(os.path.join(d, "A.DST"))
+            self.assertEqual(fl.folder_signature(d), sig0)
+
+    def test_ignores_other_files_and_reports_an_unreadable_folder(self):
+        with tempfile.TemporaryDirectory() as d:
+            sig0 = fl.folder_signature(d)
+            open(os.path.join(d, "notes.txt"), "w").close()
+            os.mkdir(os.path.join(d, "sub.dst"))
+            self.assertEqual(fl.folder_signature(d), sig0)
+            self.assertIsNone(fl.folder_signature(os.path.join(d, "missing")))
+
+
 class MachineNameTests(unittest.TestCase):
     def test_slot_from_sequence_suffix(self):
         self.assertEqual(fl.machine_slot_and_name("LOGO.012", 0), (12, "LOGO"))

@@ -62,8 +62,8 @@ class AppTests(unittest.TestCase):
         self.root.destroy()
         self.tmp.cleanup()
 
-    def make(self, fake):
-        app = self.app_mod.App(self.root, settings_file=self.settings_file, proto=fake)
+    def make(self, fake, **kw):
+        app = self.app_mod.App(self.root, settings_file=self.settings_file, proto=fake, **kw)
         self.settle(app)
         return app
 
@@ -103,6 +103,67 @@ class AppTests(unittest.TestCase):
         app.local_tree.selection_set("0")
         self.root.update()
         self.assertTrue(self.enabled(app.btn_sel_to))
+
+    def names_shown(self, app):
+        return [app.local_tree.item(i)["values"][0] for i in app.local_tree.get_children()]
+
+    def test_folder_watcher_picks_up_new_and_removed_files(self):
+        app = self.make(FakeMachines([MACHINE_A]), watch_ms=0)  # watcher driven by hand below
+        app.folder_var.set(self.folder)
+        app.load_folder()
+        self.assertEqual(self.names_shown(app), ["CAP.dsb", "LOGO.DST"])
+        app.local_tree.selection_set("1")  # LOGO.DST
+        with open(os.path.join(self.folder, "BADGE.DST"), "wb") as fh:
+            fh.write(b"y" * 1500)
+        open(os.path.join(self.folder, "ignored.txt"), "w").close()
+        app._watch_folder()
+        self.root.update()
+        self.assertEqual(self.names_shown(app), ["BADGE.DST", "CAP.dsb", "LOGO.DST"])
+        self.assertEqual(app.local_files, ["BADGE.DST", "CAP.dsb", "LOGO.DST"])
+        self.assertEqual([app.local_files[int(i)] for i in app.local_tree.selection()], ["LOGO.DST"],
+                         "the selection follows the file, not the row number")
+        self.assertIn("new file", app.status_var.get())
+        os.remove(os.path.join(self.folder, "CAP.dsb"))
+        app._watch_folder()
+        self.assertEqual(self.names_shown(app), ["BADGE.DST", "LOGO.DST"])
+        self.assertIn("removed", app.status_var.get())
+        app.status("unchanged")
+        app._watch_folder()
+        self.assertEqual(app.status_var.get(), "unchanged", "no news when nothing changed")
+
+    def test_watcher_follows_the_folder_shown_not_a_half_typed_path(self):
+        app = self.make(FakeMachines([MACHINE_A]), watch_ms=0)
+        app.folder_var.set(self.folder)
+        app.load_folder()
+        app.folder_var.set(self.tmp.name)  # typing a different path, not confirmed yet
+        with open(os.path.join(self.folder, "NEW.DST"), "wb") as fh:
+            fh.write(b"z")
+        app._watch_folder()
+        self.assertIn("NEW.DST", app.local_files)
+
+    def test_refresh_button_reads_the_folder_again(self):
+        app = self.make(FakeMachines([MACHINE_A]), watch_ms=0)
+        app.folder_var.set(self.folder)
+        app.load_folder()
+        with open(os.path.join(self.folder, "LATE.DSB"), "wb") as fh:
+            fh.write(b"z")
+        app.folder_refresh_btn.invoke()
+        self.assertIn("LATE.DSB", self.names_shown(app))
+        self.assertIn("Refreshed", app.status_var.get())
+        grid = app.folder_refresh_btn.grid_info()
+        self.assertEqual((int(grid["row"]), int(grid["column"])), (0, 2), "to the right of the folder button")
+
+    def test_watcher_runs_on_its_own(self):
+        app = self.make(FakeMachines([MACHINE_A]), watch_ms=50)
+        app.folder_var.set(self.folder)
+        app.load_folder()
+        with open(os.path.join(self.folder, "AUTO.DST"), "wb") as fh:
+            fh.write(b"z")
+        end = time.time() + 3
+        while time.time() < end and "AUTO.DST" not in app.local_files:
+            self.root.update()
+            time.sleep(0.02)
+        self.assertIn("AUTO.DST", app.local_files)
 
     def test_copy_all_to_machine_skips_what_is_there(self):
         fake = FakeMachines([MACHINE_A])

@@ -11,10 +11,11 @@ from . import protocol
 from . import settings as st
 
 APP_TITLE = "OpenDecoDesk Machine Files"
+WATCH_MS = 2000  # how often the folder is checked for new, changed or removed files
 
 
 class App:
-    def __init__(self, root, settings_file=None, scan_on_start=True, proto=protocol):
+    def __init__(self, root, settings_file=None, scan_on_start=True, proto=protocol, watch_ms=WATCH_MS):
         self.root = root
         self.proto = proto
         self.settings_file = settings_file
@@ -26,11 +27,15 @@ class App:
         self.machine = None         # the one picked
         self.busy = False
         self._events = queue.Queue()
+        self._folder_sig = None     # folder_signature() of what the list shows
+        self._shown_folder = ""     # the folder the list shows (not what's half-typed in the box)
+        self._watch_ms = watch_ms
 
         root.title(APP_TITLE)
         root.minsize(760, 420)
         self._build()
         self._poll_id = root.after(60, self._poll)
+        self._watch_id = root.after(self._watch_ms, self._watch_folder) if self._watch_ms else None
         root.bind("<Destroy>", self._on_destroy, add="+")
 
         folder = self.settings.get("lastFolder") or ""
@@ -65,6 +70,8 @@ class App:
         self._folder_img = _folder_icon(self.root)
         self.folder_btn = ttk.Button(top_left, image=self._folder_img, command=self.pick_folder)
         self.folder_btn.grid(row=0, column=1, padx=(6, 0))
+        self.folder_refresh_btn = ttk.Button(top_left, text="↻", width=3, command=self.refresh_folder)
+        self.folder_refresh_btn.grid(row=0, column=2, padx=(4, 0))
 
         self.local_tree = self._tree(outer, [("name", "Name", 260, "w")])
         self.local_tree.master.grid(row=1, column=0, sticky="nsew")
@@ -148,9 +155,12 @@ class App:
         self._poll_id = self.root.after(60, self._poll)
 
     def _on_destroy(self, event):
-        if event.widget is self.root and self._poll_id:
-            self.root.after_cancel(self._poll_id)
-            self._poll_id = None
+        if event.widget is not self.root:
+            return
+        for attr in ("_poll_id", "_watch_id"):
+            if getattr(self, attr):
+                self.root.after_cancel(getattr(self, attr))
+                setattr(self, attr, None)
 
     def status(self, msg):
         self.status_var.set(msg)
@@ -168,19 +178,56 @@ class App:
             self.load_folder()
 
     def load_folder(self):
+        """Show the folder typed or picked (and remember it)."""
         folder = self.folder_var.get().strip()
+        if self._read_folder(folder) and folder:
+            self.settings["lastFolder"] = folder
+            self._save_settings()
+            self.status(f"{len(self.local_files)} design file(s) in the folder.")
+
+    def refresh_folder(self):
+        """The ↻ next to the folder: read it again now."""
+        if self._read_folder(self.folder_var.get().strip()):
+            self.status(f"Refreshed — {len(self.local_files)} design file(s) in the folder.")
+
+    def _read_folder(self, folder):
+        """Lists `folder` into the left pane, keeping the files that were selected selected. False if
+        it couldn't be read (the list is then empty)."""
+        keep = {self.local_files[int(i)] for i in self.local_tree.selection() if int(i) < len(self.local_files)}
+        ok = True
         self.local_files = []
         if folder:
             try:
                 self.local_files = fl.list_design_files(folder)
             except OSError as e:
                 self.status(f"Can't read that folder: {e}")
-            else:
-                self.settings["lastFolder"] = folder
-                self._save_settings()
-                self.status(f"{len(self.local_files)} design file(s) in the folder.")
+                ok = False
+        self._shown_folder = folder if ok else ""
+        self._folder_sig = fl.folder_signature(folder) if folder and ok else None
         self._fill(self.local_tree, [(n,) for n in self.local_files])
+        reselect = [str(i) for i, n in enumerate(self.local_files) if n in keep]
+        if reselect:
+            self.local_tree.selection_set(reselect)
         self._update_buttons()
+        return ok
+
+    def _watch_folder(self):
+        """Every WATCH_MS: if the folder's design files changed (a file added, removed or replaced),
+        show the new list. Quiet otherwise; doesn't touch the status line while a copy is running."""
+        self._watch_id = None
+        try:
+            folder = self._shown_folder
+            if folder and os.path.isdir(folder):
+                sig = fl.folder_signature(folder)
+                if sig is not None and sig != self._folder_sig:
+                    before = len(self.local_files)
+                    if self._read_folder(folder) and not self.busy and self._folder_sig is not None:
+                        n = len(self.local_files)
+                        change = "new file(s)" if n > before else "file(s) removed" if n < before else "files changed"
+                        self.status(f"Folder updated ({change}) — {n} design file(s).")
+        finally:
+            if self._watch_ms:
+                self._watch_id = self.root.after(self._watch_ms, self._watch_folder)
 
     # ---- machine side --------------------------------------------------------------------
     def scan(self):

@@ -16,6 +16,21 @@ def list_design_files(folder):
     return sorted(names, key=str.lower)
 
 
+def folder_signature(folder):
+    """What the folder's design files look like right now — each one's name, size and modified time —
+    so a change (a file added, removed, replaced or still being written) shows as a different value.
+    None if the folder can't be read."""
+    try:
+        sig = []
+        for entry in os.scandir(folder):
+            if os.path.splitext(entry.name)[1].lower() in DESIGN_EXTS and entry.is_file():
+                st = entry.stat()
+                sig.append((entry.name, st.st_size, st.st_mtime_ns))
+        return frozenset(sig)
+    except OSError:
+        return None
+
+
 def base_key(name):
     """A file's identity for "already there?" checks. The machine stores an upload of LOGO.DST as
     LOGO.<NNN> (its own sequence number), so both sides drop one trailing ".<ext-or-number>" and
