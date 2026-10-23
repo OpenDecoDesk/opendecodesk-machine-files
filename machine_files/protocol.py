@@ -122,6 +122,13 @@ def discover_machines(target_port=UDP_TARGET_PORT, listen_port=UDP_LISTEN_PORT,
     except (AttributeError, OSError):
         pass  # not on every platform; SO_REUSEADDR is enough there
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    if hasattr(socket, "SIO_UDP_CONNRESET"):
+        # Windows turns an ICMP "port unreachable" into an error on the NEXT receive, which
+        # would end the scan; switch that off.
+        try:
+            sock.ioctl(socket.SIO_UDP_CONNRESET, False)
+        except OSError:
+            pass
     try:
         sock.bind(("", listen_port))
     except OSError as e:
@@ -146,6 +153,8 @@ def discover_machines(target_port=UDP_TARGET_PORT, listen_port=UDP_LISTEN_PORT,
                 data, addr = sock.recvfrom(1024)
             except socket.timeout:
                 break
+            except ConnectionResetError:
+                continue  # Windows' ICMP "port unreachable", if the switch above wasn't honoured
             if data == DISCOVERY_PAYLOAD or addr[0] in seen:
                 continue  # our own broadcast looping back, or a repeat
             seen.add(addr[0])

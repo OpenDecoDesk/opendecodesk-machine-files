@@ -30,7 +30,8 @@ class App:
         root.title(APP_TITLE)
         root.minsize(760, 420)
         self._build()
-        root.after(60, self._poll)
+        self._poll_id = root.after(60, self._poll)
+        root.bind("<Destroy>", self._on_destroy, add="+")
 
         folder = self.settings.get("lastFolder") or ""
         if folder and os.path.isdir(folder):
@@ -144,7 +145,12 @@ class App:
                     self._update_buttons()
         except queue.Empty:
             pass
-        self.root.after(60, self._poll)
+        self._poll_id = self.root.after(60, self._poll)
+
+    def _on_destroy(self, event):
+        if event.widget is self.root and self._poll_id:
+            self.root.after_cancel(self._poll_id)
+            self._poll_id = None
 
     def status(self, msg):
         self.status_var.set(msg)
