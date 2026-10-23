@@ -52,6 +52,44 @@ class PresenceTests(unittest.TestCase):
         self.assertEqual(to_copy, ["NEW.002"])
         self.assertEqual(skipped, ["LOGO.001"])
 
+    def test_names_from_the_machine_never_leave_the_folder(self):
+        # Anything on the network can answer as a machine, so its file names are untrusted.
+        hostile = ["../../evil.003", "/etc/cron.d/x.004", "..\\..\\win.005", "C:/Windows/x.006", "a/b.007",
+                   "..", ".", "", "  .hidden.010", "trail. .011", "tab\there.013", "x" * 300 + ".012"]
+        with tempfile.TemporaryDirectory() as d:
+            for stored in hostile:
+                stem = fl.machine_slot_and_name(stored, 0)[1] or stored
+                path = fl.free_local_path(d, stem, "DSB")
+                self.assertEqual(os.path.dirname(path), d, stored)
+                name = os.path.basename(path)
+                self.assertTrue(name.endswith(".DSB") and not name.startswith("."), name)
+                self.assertFalse(any(c in name for c in '/\\:*?"<>|\t'), name)
+                self.assertLessEqual(len(name), fl.MAX_STEM_LENGTH + 4)
+
+    def test_safe_stem_examples(self):
+        self.assertEqual(fl.safe_local_stem("../../evil"), "_.._evil")
+        self.assertEqual(fl.safe_local_stem("/etc/cron.d/x"), "_etc_cron.d_x")
+        self.assertEqual(fl.safe_local_stem(".."), "design")
+        self.assertEqual(fl.safe_local_stem("CON"), "_CON")
+        self.assertEqual(fl.safe_local_stem("lpt1.part"), "_lpt1.part")
+        self.assertEqual(fl.safe_local_stem("Cap Front"), "Cap Front")
+        self.assertEqual(fl.safe_local_stem("马头机~1"), "马头机~1")
+
+    def test_extension_is_made_safe_too(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(fl.free_local_path(d, "LOGO", "../D/S\\B"), os.path.join(d, "LOGO.DSB"))
+            self.assertEqual(fl.free_local_path(d, "LOGO", ""), os.path.join(d, "LOGO.DSB"))
+
+    def test_an_existing_symlink_counts_as_taken(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("no symlinks here")
+        with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as elsewhere:
+            try:
+                os.symlink(os.path.join(elsewhere, "target"), os.path.join(d, "LOGO.DSB"))
+            except OSError:
+                self.skipTest("can't make symlinks here")
+            self.assertIsNone(fl.free_local_path(d, "LOGO", "DSB"))
+
     def test_never_overwrites(self):
         with tempfile.TemporaryDirectory() as d:
             open(os.path.join(d, "LOGO.DST"), "w").close()

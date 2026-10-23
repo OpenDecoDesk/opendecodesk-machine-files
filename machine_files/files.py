@@ -68,7 +68,34 @@ def missing_in_folder(machine_stored_names, local_names):
     return split_by_presence(machine_stored_names, local_names)
 
 
+# Names a file can't take on Windows, whatever its extension.
+_WINDOWS_RESERVED = {"con", "prn", "aux", "nul"} | {f"com{i}" for i in range(1, 10)} | {f"lpt{i}" for i in range(1, 10)}
+MAX_STEM_LENGTH = 120
+
+
+def safe_local_stem(name):
+    """A file name taken from the MACHINE (anything on the network can answer as one) made safe to
+    save under: path separators, drive colons and characters Windows refuses become "_", control
+    characters go, leading dots and trailing dots / spaces are dropped (so no "..", no hidden file,
+    nothing Windows trims), a reserved Windows name gets a "_" in front, and it's kept short. Never
+    empty."""
+    stem = re.sub(r'[\x00-\x1f\x7f]', "", str(name or ""))
+    stem = re.sub(r'[/\\:*?"<>|]', "_", stem)
+    stem = stem.lstrip(". ").rstrip(". ")[:MAX_STEM_LENGTH].rstrip(". ")
+    if not stem:
+        return "design"
+    if stem.split(".")[0].strip().lower() in _WINDOWS_RESERVED:
+        stem = "_" + stem
+    return stem
+
+
 def free_local_path(folder, stem, ext):
-    """`folder/stem.ext`, or None if a file by that name is already there (never overwrite)."""
-    path = os.path.join(folder, f"{stem}.{ext.lstrip('.')}")
-    return None if os.path.exists(path) else path
+    """Where to save `stem.ext` in `folder`: None if a file by that name is already there (never
+    overwrite). The stem is made safe first (safe_local_stem), and the result is checked to sit
+    directly in `folder` — a name from the machine can never write anywhere else."""
+    ext = re.sub(r"[^A-Za-z0-9]", "", str(ext or "")) or "DSB"
+    name = f"{safe_local_stem(stem)}.{ext}"
+    path = os.path.join(folder, name)
+    if os.path.dirname(os.path.abspath(path)) != os.path.abspath(folder) or os.path.basename(path) != name:
+        raise ValueError(f"Refusing to save “{stem}” outside the chosen folder.")
+    return None if os.path.lexists(path) else path

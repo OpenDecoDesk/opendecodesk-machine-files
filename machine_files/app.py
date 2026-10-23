@@ -351,27 +351,30 @@ class App:
         ip = self.machine["ip"]
 
         def work(progress):
-            saved = []
+            saved, taken = [], []
             for i, stored in enumerate(to_copy, 1):
                 progress(f"Copying {stored} from the machine ({i} of {len(to_copy)})…")
                 got = self.proto.download_file(ip, stored)
+                # The name comes from the machine — free_local_path makes it safe and keeps it in `folder`.
                 stem = fl.machine_slot_and_name(stored, 0)[1] or stored
-                path = fl.free_local_path(folder, stem, got.get("ext") or "DST")
+                path = fl.free_local_path(folder, stem, got.get("ext") or "DSB")
                 if path is None:
-                    continue  # a file by that name appeared meanwhile; never overwrite
+                    taken.append(stored)  # a file by that name is already there; never overwrite
+                    continue
                 with open(path, "xb") as fh:
                     fh.write(got["bytes"])
                 saved.append(os.path.basename(path))
-            return saved
+            return saved, taken
 
-        def done(saved, error):
+        def done(result, error):
             self.load_folder()
             if error:
                 self._error("Copy from machine", error)
                 return
+            saved, taken = result
             msg = f"Copied {len(saved)} file(s) into the folder."
-            if skipped:
-                msg += f" {len(skipped)} already there, skipped."
+            if skipped or taken:
+                msg += f" {len(skipped) + len(taken)} already there, skipped."
             self.status(msg)
 
         self._run(work, done)

@@ -137,6 +137,20 @@ class AppTests(unittest.TestCase):
         self.assertIn("1 already there", app.status_var.get())
         self.assertIn("NEW DESIGN.DSB", app.local_files)  # the folder list was re-read
 
+    def test_hostile_names_from_a_machine_stay_in_the_folder(self):
+        fake = FakeMachines([MACHINE_A])
+        fake.files[MACHINE_A["ip"]] = [{"name": "../../escaped.003"}, {"name": "/tmp/absolute.004"},
+                                        {"name": "CON.005"}]
+        app = self.make(fake)
+        app.folder_var.set(self.folder)
+        app.load_folder()
+        app.copy_all_from_machine()
+        self.settle(app)
+        self.assertEqual(sorted(os.listdir(self.folder)),
+                         ["CAP.dsb", "LOGO.DST", "_.._escaped.DSB", "_CON.DSB", "_tmp_absolute.DSB", "readme.txt"])
+        self.assertFalse(os.path.exists(os.path.join(self.tmp.name, "escaped.DSB")))
+        self.assertIn("Copied 3 file", app.status_var.get())
+
     def test_copy_from_machine_reports_a_refusal(self):
         fake = FakeMachines([MACHINE_A])
         fake.files[MACHINE_A["ip"]] = [{"name": "BROKEN.004"}]
