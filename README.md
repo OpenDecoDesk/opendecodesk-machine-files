@@ -68,7 +68,7 @@ The protocol tests run against stub machines on loopback that speak the real fra
 where Tk or a display isn't available.
 
 ## Making a release
-Push a tag like `v0.4.0` (and set the same version in `machine_files/__init__.py` and the spec file). CI
+Push a tag like `v0.5.0` (and set the same version in `machine_files/__init__.py` and the spec file). CI
 runs the tests, builds both apps and publishes them as a release.
 
 ## Build the apps yourself
