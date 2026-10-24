@@ -19,7 +19,7 @@ if sys.platform == "darwin":
             # macOS asks before an app talks to devices on the local network; this is the reason shown.
             "NSLocalNetworkUsageDescription":
                 "Finds the embroidery machines on your network and copies design files to them.",
-            "CFBundleShortVersionString": "0.4.0",
+            "CFBundleShortVersionString": "0.5.0",
         },
     )
 else:
