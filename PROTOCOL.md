@@ -63,6 +63,12 @@ request came from: a scan sent from a random free port gets its replies on that 
 `1201plus` and a `1501ultra`, three tries each). So a scanner needn't hold 60023 — which on Windows can
 be taken by the vendor's app or reserved by the system.
 
+When broadcasts don't work (a Windows firewall drops replies to a broadcast unless the app is allowed;
+some networks don't pass broadcasts), the machines can be found by connecting to **TCP 6000** on each
+address and sending the first file-list request (§3): a machine answers with a `CF 26` page. The
+discovery packet sent straight to that address then gives its MAC / firmware / model. Swept with 128
+connections at a time and a 0.6 s connect timeout, a /24 takes about a second.
+
 The reply is **not** an `FA 01` frame — it's a flat fixed-layout record:
 
 | Field    | Offset    | Encoding                                                        |

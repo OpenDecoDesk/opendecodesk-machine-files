@@ -29,6 +29,9 @@ class FakeMachines:
     def discover_machines(self):
         return list(self.found)
 
+    def find_machines(self, progress=None):
+        return self.discover_machines()
+
     def list_machine_dir(self, ip):
         return list(self.files.setdefault(ip, []))
 
@@ -184,6 +187,13 @@ class AppTests(unittest.TestCase):
         self.assertIn("===== Log", text)
         self.assertIn("Diagnostics saved", app.status_var.get())
         self.assertTrue(info.called)
+
+    def test_machines_found_by_the_sweep_say_so(self):
+        fake = FakeMachines([])
+        fake.find_machines = lambda progress=None: [{**MACHINE_A, "foundBy": "port 6000"}]
+        app = self.make(fake, watch_ms=0)
+        self.assertEqual(list(app.machine_combo["values"]), ["1201plus — 10.0.0.5"])
+        self.assertIn("firewall", app.status_var.get())
 
     def test_copy_all_to_machine_skips_what_is_there(self):
         fake = FakeMachines([MACHINE_A])

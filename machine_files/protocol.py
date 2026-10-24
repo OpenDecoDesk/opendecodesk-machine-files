@@ -16,6 +16,7 @@ Standard library only. Every failure raises a RuntimeError whose message can be 
 operator as-is.
 """
 
+import concurrent.futures
 import json
 import logging
 import math
@@ -38,6 +39,13 @@ DISCOVERY_ROUNDS = 3            # the scan is sent this many times across the wi
 
 # ---- File listing and transfers (TCP) ----------------------------------------------------
 TCP_PORT = 6000
+
+# The fallback when the broadcast scan gets no reply (a firewall that drops replies to a broadcast, or a
+# network that doesn't pass broadcasts): connect to TCP 6000 on every address of this computer's networks.
+# Connections this computer makes, and their answers, get through firewalls that drop the broadcast replies.
+SWEEP_CONNECT_SECONDS = 0.6   # per address; a machine on the LAN accepts in a few ms
+SWEEP_CHECK_SECONDS = 1.5     # for the "list files" answer that proves it's a machine
+SWEEP_WORKERS = 128
 LIST_CONNECT_TIMEOUT_SECONDS = 2.0
 LIST_PAGE_READ_SECONDS = 2.0
 MAX_LIST_PAGES = 64  # ~14 files a page; listing stops early once the declared `num` files are in
@@ -257,6 +265,102 @@ def discover_machines(target_port=UDP_TARGET_PORT, listen_port=UDP_LISTEN_PORT,
         log.warning("scan: no replies. Usual causes: this computer isn't on the machines' network, or a "
                     "firewall blocks the replies (UDP from the machines' port 23).")
     return machines
+
+
+def sweep_targets(addresses):
+    """Every other address on each of this computer's networks, taken as /24s (192.168.1.173 →
+    192.168.1.1 … .254 without .173). Link-local and loopback addresses are skipped."""
+    out, mine = [], set(addresses)
+    for ip in addresses:
+        parts = ip.split(".")
+        if len(parts) != 4 or ip.startswith(("169.254.", "127.")):
+            continue
+        for n in range(1, 255):
+            host = ".".join(parts[:3] + [str(n)])
+            if host not in mine and host not in out:
+                out.append(host)
+    return out
+
+
+def check_machine(ip, port=TCP_PORT, connect_timeout=SWEEP_CONNECT_SECONDS, check_timeout=SWEEP_CHECK_SECONDS):
+    """True if something at ip:port answers the "list files" request the way these machines do (a
+    framed cf26 page) — so a printer or anything else that happens to accept on that port isn't
+    taken for a machine. Read-only: one page of the file list, then the connection is closed."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(connect_timeout)
+    try:
+        sock.connect((ip, port))
+    except (socket.timeout, OSError):
+        sock.close()
+        return False
+    try:
+        log.info("sweep: %s accepts on port %s — checking it's a machine", ip, port)
+        time.sleep(0.15)  # the vendor app's pause between connect and the first command
+        sock.settimeout(check_timeout)
+        sock.sendall(_build_list_command(1))
+        frame = _recv_frame(sock)
+        ok = bool(frame) and len(frame) >= 8 and frame[6:8] == bytes([0xCF, 0x26])
+        log.info("sweep: %s %s", ip, "answers like a machine" if ok else "isn't a machine (wrong answer)")
+        return ok
+    except (socket.timeout, OSError) as e:
+        log.info("sweep: %s isn't a machine (%s)", ip, e)
+        return False
+    finally:
+        sock.close()
+
+
+def ask_identity(ip, target_port=UDP_TARGET_PORT, timeout=1.0):
+    """Ask one address directly for its model / MAC / firmware (the scan's packet, sent straight to it;
+    its answer comes from the address asked, which firewalls let through). None if no answer."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.bind(("", 0))
+        sock.settimeout(timeout)
+        sock.sendto(DISCOVERY_PAYLOAD, (ip, target_port))
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            sock.settimeout(max(0.01, deadline - time.time()))
+            data, addr = sock.recvfrom(1024)
+            if addr[0] == ip and data != DISCOVERY_PAYLOAD:
+                return parse_discovery_reply(data)
+    except (socket.timeout, OSError):
+        pass
+    finally:
+        sock.close()
+    return None
+
+
+def sweep_for_machines(hosts=None, port=TCP_PORT, target_port=UDP_TARGET_PORT, workers=SWEEP_WORKERS,
+                       progress=None):
+    """The fallback scan: try TCP `port` on every address in `hosts` (default: this computer's
+    networks, sweep_targets), many at once; keep the ones that answer like a machine, then ask each
+    for its model / MAC / firmware. Returns [{ip, mac, model, firmware, foundBy}]."""
+    if hosts is None:
+        hosts = sweep_targets(local_ipv4_addresses())
+    started = time.time()
+    log.info("sweep: trying port %s on %d address(es)", port, len(hosts))
+    if progress:
+        progress(f"No reply to the scan — checking {len(hosts)} addresses on port {port}…")
+    found = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, min(workers, len(hosts) or 1))) as pool:
+        for ip, ok in zip(hosts, pool.map(lambda h: check_machine(h, port), hosts)):
+            if ok:
+                found.append(ip)
+    machines = []
+    for ip in found:
+        info = ask_identity(ip, target_port) or {"mac": "", "firmware": "", "model": "SmartStitch"}
+        machines.append({"ip": ip, **info, "foundBy": f"port {port}"})
+    log.info("sweep: done in %.1f s — %d machine(s)%s", time.time() - started, len(machines),
+             (": " + ", ".join(f"{m['model']} {m['ip']}" for m in machines)) if machines else "")
+    return machines
+
+
+def find_machines(progress=None):
+    """The scan the app runs: the broadcast first; if nothing answers, the port-6000 sweep."""
+    found = discover_machines()
+    if found:
+        return found
+    return sweep_for_machines(progress=progress)
 
 
 def _build_list_command(page_num):

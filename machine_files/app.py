@@ -302,7 +302,7 @@ class App:
                 found = []
             self._set_machines(found or [], remembered=self.settings.get("lastMachine"))
 
-        self._run(lambda progress: self.proto.discover_machines(), done)
+        self._run(lambda progress: self.proto.find_machines(progress), done)
 
     def _set_machines(self, found, remembered=None):
         """Fill the picker. The remembered machine is matched by MAC (its IP can change); if it
@@ -321,7 +321,10 @@ class App:
         if pick is None and self.machines:
             pick = self.machines[0]
         self.machine_combo["values"] = [self._machine_label(m) for m in self.machines]
-        if found:
+        if found and any(m.get("foundBy") for m in found):
+            self.status(f"Found {len(found)} machine(s) by checking each address — the network scan got no "
+                        "reply (a firewall may be blocking it).")
+        elif found:
             self.status(f"Found {len(found)} machine(s).")
         elif self.machines:
             self.status("No machines answered the scan — showing the last one used.")
@@ -363,7 +366,9 @@ class App:
                 self.status(f"Couldn't list the machine's files: {error}")
             else:
                 self._show_machine_files(listing)
-                self.status(f"{len(listing)} file(s) on the machine.")
+                note = (" Found by checking each address — the network scan got no reply (a firewall may be "
+                        "blocking it).") if self.machine and self.machine.get("foundBy") else ""
+                self.status(f"{len(listing)} file(s) on the machine.{note}")
             if then:
                 then(listing if not error else None)
 

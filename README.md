@@ -36,6 +36,9 @@ install besides the app itself.
 Tested against the `1201plus` and `1501ultra` models.
 
 ### If no machines are found
+When the network scan gets no reply, the app tries TCP port 6000 (the machines' file port) on every
+address of the computer's networks and keeps the ones that answer like a machine. That gets through a
+firewall that drops the scan's replies; it takes a few seconds. If that finds nothing either:
 Click **Save diagnostics…** (bottom right) and send the file it saves. It holds the app's version, this
 computer's network addresses, where the scan was sent and what came back, and on Windows the network
 type (Public / Private), the firewall's state and any firewall rule for this app — nothing is sent
