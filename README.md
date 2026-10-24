@@ -39,10 +39,9 @@ Tested against the `1201plus` and `1501ultra` models.
 Click **Save diagnostics…** (bottom right) and send the file it saves. It holds the app's version, this
 computer's network addresses, where the scan was sent and what came back, and on Windows the network
 type (Public / Private), the firewall's state and any firewall rule for this app — nothing is sent
-anywhere by the app itself. The usual causes: Windows treats the network as **Public** or the firewall
-blocks the app (it must be allowed to receive on UDP port 60023), the computer isn't on the machines'
-network (e.g. a remote PC reached over Remote Desktop), or the vendor's app is open. Close the vendor's own app while using this
-one — both listen on the same port for scan replies.
+anywhere by the app itself. The usual causes: the computer isn't on the machines' network (e.g. a remote
+PC reached over Remote Desktop), or a firewall blocks the machines' replies. The vendor's app can stay
+open: this one uses its own port for the replies.
 
 ## Download
 From the [Releases](../../releases) page:

@@ -51,6 +51,25 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(parsed["firmware"], "JD20260617.1.3.1")
         self.assertEqual(parsed["model"], "1201plus")
 
+    def test_replies_come_back_to_any_free_port_even_with_60023_taken(self):
+        # A Windows PC where another program (or a Hyper-V reservation) holds 60023 made the scan fail
+        # with WinError 10013. The machines answer the port the scan came from, so the scan uses any free port.
+        self.assertEqual(protocol.UDP_LISTEN_PORT, 0)
+        blocker = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            blocker.bind(("", 60023))
+        except OSError:
+            blocker.close()
+            blocker = None  # something on this computer already holds it — the same situation
+        stub = StubDiscoveryMachine()
+        try:
+            found = protocol.discover_machines(target_port=stub.port, window_seconds=0.5, broadcast_ip="127.0.0.1")
+        finally:
+            stub.stop()
+            if blocker:
+                blocker.close()
+        self.assertEqual([m["mac"] for m in found], ["AA:BB:CC:DD:EE:FF"])
+
     def test_no_machine_answers(self):
         found = protocol.discover_machines(target_port=free_udp_port(), listen_port=free_udp_port(),
                                            window_seconds=0.3, broadcast_ip="127.0.0.1")

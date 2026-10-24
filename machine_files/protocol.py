@@ -4,7 +4,7 @@ The SmartStitch embroidery machines' LAN protocol — discovery, file listing, u
 These machines are NOT FTP servers. They speak two proprietary protocols, reverse-engineered from
 Wireshark captures of the vendor's own software (full reference: PROTOCOL.md):
   - Discovery: a UDP broadcast to port 23 with a fixed 4-byte payload; each machine replies to
-    UDP port 60023 on the sender with its MAC, firmware and model.
+    the port the scan came from with its MAC, firmware and model (the vendor's app happens to use 60023).
   - Everything else: framed TCP on port 6000. Every frame, in both directions, is
         fa 01 <len16 LE = len(body)+1> <body> <lrc>
     where <lrc> is the XOR of every byte before it.
@@ -28,7 +28,10 @@ log = logging.getLogger("machine_files.protocol")
 # ---- Discovery (UDP) ---------------------------------------------------------------------
 UDP_BROADCAST_IP = "255.255.255.255"
 UDP_TARGET_PORT = 23      # the machines' discovery port
-UDP_LISTEN_PORT = 60023   # the machines reply to this port on the sender
+# The machines answer to whatever port the scan is sent FROM, so any free port works (0 = let the system
+# pick). A fixed one (the vendor's app uses 60023) can be held by another program or reserved by Windows
+# (Hyper-V reserves ranges of high ports), which made binding fail with WinError 10013.
+UDP_LISTEN_PORT = 0
 DISCOVERY_PAYLOAD = bytes.fromhex("ff 04 02 fb")
 DISCOVERY_WINDOW_SECONDS = 2.5  # 1.5 s occasionally missed a machine
 DISCOVERY_ROUNDS = 3            # the scan is sent this many times across the window: UDP can be lost (Wi-Fi)
@@ -194,8 +197,7 @@ def discover_machines(target_port=UDP_TARGET_PORT, listen_port=UDP_LISTEN_PORT,
     except OSError as e:
         sock.close()
         log.error("scan: can't listen on UDP port %s: %s", listen_port, e)
-        raise RuntimeError(f"Could not listen for machine replies on UDP port {listen_port} "
-                           f"(is the vendor's app or another copy of this one open?): {e}")
+        raise RuntimeError(f"Could not open a network port to hear the machines' replies: {e}")
     log.info("scan: listening on UDP %s:%s for %.1f s", *sock.getsockname()[:2], window_seconds)
 
     machines = []
@@ -252,8 +254,8 @@ def discover_machines(target_port=UDP_TARGET_PORT, listen_port=UDP_LISTEN_PORT,
              f", {resets} connection-reset error(s)" if resets else "",
              f", {ignored} echo(es) of our own scan" if ignored else "")
     if not machines:
-        log.warning("scan: no replies. Usual causes: the firewall blocks UDP %s coming in, the machines are on "
-                    "another network, or the vendor's app is open.", listen_port)
+        log.warning("scan: no replies. Usual causes: this computer isn't on the machines' network, or a "
+                    "firewall blocks the replies (UDP from the machines' port 23).")
     return machines
 
 
