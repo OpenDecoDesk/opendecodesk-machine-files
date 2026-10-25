@@ -1,5 +1,6 @@
 """The window, driven with a fake machine. Skipped where Tk or a display isn't available."""
 
+import gc
 import os
 import tempfile
 import time
@@ -75,8 +76,14 @@ class AppTests(unittest.TestCase):
         self.root.withdraw()
 
     def tearDown(self):
-        self.root.destroy()
+        self.close_window()
         self.tmp.cleanup()
+
+    def close_window(self):
+        """Close the window, then free what's left of it here on the Tk thread: left for later, the garbage
+        collector can free Tk objects on a worker thread, which aborts the process (Tcl_AsyncDelete)."""
+        self.root.destroy()
+        gc.collect()
 
     def make(self, fake, **kw):
         app = self.app_mod.App(self.root, settings_file=self.settings_file, proto=fake, **kw)
@@ -345,7 +352,7 @@ class AppTests(unittest.TestCase):
         app.machine_combo.current(1)
         app._machine_picked()
         self.settle(app)
-        self.root.destroy()
+        self.close_window()
 
         # Next run: machine B has a new address; it's still the one picked.
         self.root = tk.Tk()
@@ -356,7 +363,7 @@ class AppTests(unittest.TestCase):
         self.assertEqual(app2.machine["ip"], "10.0.0.77")
 
         # A run where no machine answers still offers the last one at its last address.
-        self.root.destroy()
+        self.close_window()
         self.root = tk.Tk()
         self.root.withdraw()
         app3 = self.make(FakeMachines([]))
