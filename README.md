@@ -40,11 +40,14 @@ install besides the app itself.
 | Deleting files on a machine | ❌ disabled in the machines' firmware ([PROTOCOL.md §6](PROTOCOL.md)); clear files at the touchscreen |
 
 ### Compatibility
-Tested on the SmartStitch **1501 Ultra** (`1501ultra`) and **1201 Plus** (`1201plus`). These machines are
-built on **Raynen** embroidery controllers, and the app talks to the controller, not to anything
-SmartStitch-specific — so it should also work with other machines that use a Raynen controller and speak
-the same network protocol ([PROTOCOL.md](PROTOCOL.md)). That's untested so far: if you try one, a note in
-the issues saying whether it worked (with the file from **Save diagnostics…** if it didn't) helps.
+Tested on two SmartStitch machines, both with **Raynen** controllers:
+- SmartStitch **1501 Ultra** (SD5314) — reports itself as `1501ultra`
+- SmartStitch **1201 Plus** (JD5315) — reports itself as `1201plus`
+
+The app talks to the Raynen controller, not to anything SmartStitch-specific, so it should also work with
+other machines that have a Raynen controller speaking the same network protocol
+([PROTOCOL.md](PROTOCOL.md)). That's untested so far: if you try one, a note in the issues saying whether
+it worked (with the file from **Save diagnostics…** if it didn't) helps.
 
 ### If no machines are found
 When the network scan gets no reply, the app tries TCP port 6000 (the machines' file port) on every
