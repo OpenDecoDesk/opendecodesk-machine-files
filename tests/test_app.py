@@ -129,61 +129,81 @@ class AppTests(unittest.TestCase):
 
     def names_shown(self, app):
         """The file rows of the left list (folder rows are "dir:<name>")."""
-        return [app.local_tree.item(i)["text"] for i in app.local_tree.get_children() if not i.startswith("dir:")]
+        return [app.local_tree.item(i)["text"] for i in app.local_tree.get_children() if i.isdigit()]
 
     def folders_shown(self, app):
         return [app.local_tree.item(i)["text"] for i in app.local_tree.get_children() if i.startswith("dir:")]
 
-    def test_folders_listed_first_and_opened_by_double_click_or_enter(self):
+    def rows(self, app):
+        t = app.local_tree
+        return [(i, t.item(i)["text"]) for i in t.get_children()]
+
+    def test_list_shows_up_folders_then_files(self):
         os.makedirs(os.path.join(self.folder, "Caps", "Winter"))
         os.mkdir(os.path.join(self.folder, "shirts"))
+        app = self.make(FakeMachines([MACHINE_A]), watch_ms=0)
+        app.folder_var.set(self.folder)
+        app.load_folder()
+        self.assertEqual(self.rows(app), [("up", ".."), ("dir:Caps", "Caps"), ("dir:shirts", "shirts"),
+                                          ("0", "CAP.dsb"), ("1", "LOGO.DST")])
+        self.assertTrue(app.local_tree.item("up")["image"] and app.local_tree.item("dir:Caps")["image"])
+        self.assertIn("2 folder(s), 2 design file(s)", app.status_var.get())
+        app.local_tree.selection_set(["up", "dir:Caps"])  # selecting these isn't a file to send
+        self.root.update()
+        self.assertTrue(app.btn_sel_to.instate(["disabled"]))
+
+    def test_enter_on_a_folder_and_on_dotdot(self):
+        os.makedirs(os.path.join(self.folder, "Caps", "Winter"))
         with open(os.path.join(self.folder, "Caps", "CAP FRONT.DST"), "wb") as fh:
             fh.write(b"x")
         app = self.make(FakeMachines([MACHINE_A]), watch_ms=0)
         app.folder_var.set(self.folder)
         app.load_folder()
-        kids = app.local_tree.get_children()
-        self.assertEqual(list(kids[:2]), ["dir:Caps", "dir:shirts"], "folders first, sorted")
-        self.assertEqual(self.names_shown(app), ["CAP.dsb", "LOGO.DST"])
-        self.assertTrue(app.local_tree.item("dir:Caps")["image"], "folders have an icon")
-        self.assertIn("2 folder(s), 2 design file(s)", app.status_var.get())
-        # Selecting a folder isn't a file to send.
-        app.local_tree.selection_set(["dir:Caps"])
-        self.root.update()
-        self.assertTrue(app.btn_sel_to.instate(["disabled"]))
-        # Enter on the focused folder row opens it.
-        app.local_tree.focus("dir:Caps")
-        app._open_folder_row(None)
         caps = os.path.join(self.folder, "Caps")
+        app.local_tree.focus("dir:Caps")
+        app._open_folder_row(None)  # Enter
         self.assertEqual(app.folder_var.get(), caps)
-        self.assertEqual(self.folders_shown(app), ["Winter"])
-        self.assertEqual(self.names_shown(app), ["CAP FRONT.DST"])
+        self.assertEqual(self.rows(app), [("up", ".."), ("dir:Winter", "Winter"), ("0", "CAP FRONT.DST")])
         from machine_files import settings as st
         self.assertEqual(st.load(self.settings_file)["lastFolder"], caps, "remembered")
-        # A double-click on a row opens it.
-        self.root.update()
-        bbox = app.local_tree.bbox("dir:Winter")
-        if bbox:  # only when drawn (not in every headless run)
-            class Ev:
-                keysym, y = "", bbox[1] + 2
-            app._open_folder_row(Ev())
-            self.assertEqual(app.folder_var.get(), os.path.join(caps, "Winter"))
-            app.folder_up()
-
-    def test_up_a_level(self):
-        sub = os.path.join(self.folder, "Caps")
-        os.mkdir(sub)
-        app = self.make(FakeMachines([MACHINE_A]), watch_ms=0)
-        app.folder_var.set(sub)
-        app.load_folder()
-        self.assertFalse(app.folder_up_btn.instate(["disabled"]))
-        app.folder_up_btn.invoke()
+        app.local_tree.focus("up")
+        app._open_folder_row(None)  # Enter on ".."
         self.assertEqual(app.folder_var.get(), self.folder)
         self.assertIn("LOGO.DST", self.names_shown(app))
-        self.assertEqual(self.folders_shown(app), ["Caps"])
+
+    def test_no_dotdot_at_the_top_of_a_drive(self):
+        app = self.make(FakeMachines([MACHINE_A]), watch_ms=0)
         app.folder_var.set(os.path.abspath(os.sep))
         app.load_folder()
-        self.assertTrue(app.folder_up_btn.instate(["disabled"]), "nothing above the top of the drive")
+        self.assertNotIn("up", app.local_tree.get_children())
+
+    @unittest.skipIf(HAVE_TK and tk.TkVersion < 8.6, "old Tk (8.5) can't show a window reliably")
+    def test_real_double_clicks(self):
+        """Double-clicks the way a person does: two clicks on a row of a VISIBLE window."""
+        os.makedirs(os.path.join(self.folder, "Caps"))
+        app = self.make(FakeMachines([MACHINE_A]), watch_ms=0)
+        self.root.deiconify()
+        self.root.geometry("800x420+40+40")
+        app.folder_var.set(self.folder)
+        app.load_folder()
+        tree = app.local_tree
+
+        def double_click(iid):
+            for _ in range(40):
+                self.root.update()
+                if tree.bbox(iid):
+                    break
+                time.sleep(0.05)
+            x, y, w, h = tree.bbox(iid)
+            for _ in range(2):
+                tree.event_generate("<ButtonPress-1>", x=x + 40, y=y + h // 2)
+                tree.event_generate("<ButtonRelease-1>", x=x + 40, y=y + h // 2)
+            self.root.update()
+
+        double_click("dir:Caps")
+        self.assertEqual(app.folder_var.get(), os.path.join(self.folder, "Caps"), "double-click opened Caps")
+        double_click("up")
+        self.assertEqual(app.folder_var.get(), self.folder, "double-click on .. went back up")
 
     def test_watcher_shows_a_new_folder(self):
         app = self.make(FakeMachines([MACHINE_A]), watch_ms=0)

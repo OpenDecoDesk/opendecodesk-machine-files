@@ -79,14 +79,14 @@ class App:
         self.folder_btn.grid(row=0, column=1, padx=(6, 0))
         self.folder_refresh_btn = ttk.Button(top_left, text="↻", width=3, command=self.refresh_folder)
         self.folder_refresh_btn.grid(row=0, column=2, padx=(4, 0))
-        self.folder_up_btn = ttk.Button(top_left, text="↑", width=3, command=self.folder_up)
-        self.folder_up_btn.grid(row=0, column=3, padx=(4, 0))
+        self._up_img = _up_icon(self.root)
 
         self.local_tree = self._tree(outer, [], tree_column=("Name", 260))
         self.local_tree.master.grid(row=1, column=0, sticky="nsew")
         self.local_folders = []     # subfolders shown at the top of the left list
         self.local_tree.bind("<Double-1>", self._open_folder_row)
         self.local_tree.bind("<Return>", self._open_folder_row)
+        self.local_tree.bind("<BackSpace>", lambda e: self.folder_up())
 
         # Middle: the four copy buttons, stacked.
         mid = ttk.Frame(outer, padding=(10, 0))
@@ -306,6 +306,8 @@ class App:
         self._folder_sig = fl.folder_signature(folder) if folder and ok else None
         tree = self.local_tree
         tree.delete(*tree.get_children())
+        if ok and folder and fl.parent_folder(folder):
+            tree.insert("", "end", iid="up", text="..", image=self._up_img)  # up a level
         for name in self.local_folders:
             tree.insert("", "end", iid="dir:" + name, text=name, image=self._folder_img)
         for i, name in enumerate(self.local_files):
@@ -322,16 +324,19 @@ class App:
         self.load_folder()
 
     def _open_folder_row(self, event=None):
-        """Double-click / Enter on a folder row opens it."""
+        """Double-click / Enter on ".." goes up a level; on a folder row, into it."""
         tree = self.local_tree
         by_key = event is None or getattr(event, "keysym", "") == "Return"
-        iid = tree.focus() if by_key else tree.identify_row(event.y)
+        iid = (tree.focus() if by_key else tree.identify_row(event.y)) or tree.focus()
+        if iid == "up":
+            self.folder_up()
+            return "break"
         if iid and iid.startswith("dir:") and self._shown_folder:
             self.open_folder(os.path.join(self._shown_folder, iid[4:]))
             return "break"
 
     def folder_up(self):
-        """↑: the folder one level up."""
+        """The ".." row (or Backspace): the folder one level up."""
         parent = fl.parent_folder(self._shown_folder) if self._shown_folder else None
         if parent:
             self.open_folder(parent)
@@ -459,8 +464,6 @@ class App:
         for btn, on in rules:
             btn.state(["!disabled"] if on else ["disabled"])
         self.rescan_btn.state(["!disabled"] if idle else ["disabled"])
-        can_go_up = bool(self._shown_folder and fl.parent_folder(self._shown_folder))
-        self.folder_up_btn.state(["!disabled"] if can_go_up else ["disabled"])
 
     def _dst_changed(self):
         self.settings["saveAsDst"] = bool(self.dst_var.get())
@@ -658,6 +661,16 @@ class App:
 
     def _save_settings(self):
         st.save(self.settings, self.settings_file)
+
+
+def _up_icon(root):
+    """A 14×14 arrow pointing up, for the ".." row."""
+    img = tk.PhotoImage(master=root, width=14, height=14)
+    color = "#4A6FA5"
+    for row in range(6):  # the head: a triangle
+        img.put(color, to=(6 - row, 1 + row, 8 + row, 2 + row))
+    img.put(color, to=(5, 7, 9, 13))  # the shaft
+    return img
 
 
 def _folder_icon(root):
