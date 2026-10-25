@@ -76,7 +76,7 @@ jobs:
           - **Windows:** `OpenDecoDesk-Machine-Files-Windows.exe` — one portable file, nothing to install. Allow it through Windows Firewall on private networks when asked (the machine scan needs it).
           - **macOS (Apple Silicon):** unzip `OpenDecoDesk-Machine-Files-macOS-AppleSilicon.zip`. The app isn't signed yet: the first time, right-click it → Open. Allow it to find devices on your local network when macOS asks. On an Intel Mac, run it from source (see the README).
 
-          **What it does:** scan for machines, list a machine's files (slot and name), copy files to the machine and copy files off it (saved as .DSB, the machine's own format), skipping files already there. It remembers the last folder and machine.
+          **What it does:** scan for machines, list a machine's files (slot and name), copy files to the machine and copy files off it, skipping files already there. Files come off the machine as .DSB (the machine's own format), or as .DST with **Save as .DST**. **Verify after copy** reads each file back and checks the stitches match. Browse into subfolders and back up from the folder list. It remembers the last folder, machine and options.
 
           Close the machine vendor's own app while using this one. Deleting files on a machine isn't possible (disabled in the firmware).
           NOTES
