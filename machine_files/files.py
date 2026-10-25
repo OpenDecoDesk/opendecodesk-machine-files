@@ -39,9 +39,12 @@ def list_subfolders(folder):
 def parent_folder(folder):
     """The folder one level up, or None at the top of a drive."""
     path = os.path.abspath(folder)
-    parent = os.path.dirname(path.rstrip("\\/") or path)
-    if not parent or os.path.normcase(parent) == os.path.normcase(path):
-        return None
+    drive, rest = os.path.splitdrive(path)
+    if not rest.strip("\\/"):
+        return None  # "/", "Z:\\", "\\\\server\\share" — the top
+    parent = os.path.dirname(path.rstrip("\\/"))
+    if not os.path.splitdrive(parent)[1]:
+        parent = drive + os.sep  # dirname("Z:\\Caps") can come back as "Z:", which means "Z:'s current folder"
     return parent
 
 

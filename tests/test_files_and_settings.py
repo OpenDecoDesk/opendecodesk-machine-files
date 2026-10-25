@@ -60,6 +60,17 @@ class SubfolderTests(unittest.TestCase):
         top = os.path.abspath(os.sep)
         self.assertIsNone(fl.parent_folder(top), "nothing above the top of the drive")
 
+    def test_parent_folder_with_windows_paths(self):
+        # Windows path rules on any computer: a drive's top and a share's top have nothing above them,
+        # and Z:\\Caps goes up to Z:\\ — not "Z:", which Windows reads as "Z:'s current folder".
+        import ntpath
+        from unittest import mock
+        with mock.patch.object(fl.os, "path", ntpath), mock.patch.object(fl.os, "sep", "\\"):
+            cases = {"Z:\\": None, "Z:/": None, "Z:\\Caps": "Z:\\", "Z:\\Caps\\Winter\\": "Z:\\Caps",
+                     "\\\\server\\share": None, "\\\\server\\share\\jobs": "\\\\server\\share\\"}
+            for path, expected in cases.items():
+                self.assertEqual(fl.parent_folder(path), expected, path)
+
 
 class MachineNameTests(unittest.TestCase):
     def test_slot_from_sequence_suffix(self):
