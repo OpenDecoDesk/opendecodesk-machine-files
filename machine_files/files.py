@@ -92,9 +92,20 @@ def missing_on_machine(local_names, machine_files):
     return split_by_presence(local_names, [f.get("name", "") for f in machine_files])
 
 
-def missing_in_folder(machine_stored_names, local_names):
-    """Machine stored names not already in the folder -> (to_copy, skipped)."""
-    return split_by_presence(machine_stored_names, local_names)
+def missing_in_folder(machine_stored_names, local_names, ext="DSB"):
+    """Machine stored names not already in the folder as the file they'd be saved as (`ext`: .DSB as they
+    come, or .DST when converting) -> (to_copy, skipped). LOGO.012 is "already there" only if LOGO.<ext>
+    is — a LOGO.DSB doesn't stop a LOGO.DST being made."""
+    ext = "." + ext.lstrip(".").lower()
+    have = [n for n in local_names if os.path.splitext(n)[1].lower() == ext]
+
+    def key(name):
+        # A machine name becomes the stem it's saved under; a local name is its stem.
+        if name in have:
+            return base_key(name)
+        return safe_local_stem(machine_slot_and_name(name, 0)[1] or name).lower()
+
+    return split_by_presence(machine_stored_names, have, key=key)
 
 
 # Names a file can't take on Windows, whatever its extension.

@@ -534,13 +534,13 @@ class App:
         folder = self.folder_var.get().strip()
         if not stored_names or not self.machine or not os.path.isdir(folder):
             return
-        to_copy, skipped = fl.missing_in_folder(stored_names, self.local_files)
+        as_dst = bool(self.dst_var.get())
+        to_copy, skipped = fl.missing_in_folder(stored_names, self.local_files, "DST" if as_dst else "DSB")
         if not to_copy:
             self.status(f"Nothing to copy — {len(skipped)} file(s) already in the folder.")
             return
         ip = self.machine["ip"]
         verify = bool(self.verify_var.get())
-        as_dst = bool(self.dst_var.get())
         log.info("copy from machine %s: %d file(s), %d already in the folder%s", ip, len(to_copy), len(skipped),
                  ", saving as .DST" if as_dst else "")
 

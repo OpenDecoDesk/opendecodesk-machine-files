@@ -73,7 +73,7 @@ class PresenceTests(unittest.TestCase):
         self.assertEqual(skipped, ["LOGO.DSB"])
 
     def test_from_machine_skips_files_already_in_folder(self):
-        to_copy, skipped = fl.missing_in_folder(["LOGO.001", "NEW.002"], ["logo.dst"])
+        to_copy, skipped = fl.missing_in_folder(["LOGO.001", "NEW.002"], ["logo.dsb"])
         self.assertEqual(to_copy, ["NEW.002"])
         self.assertEqual(skipped, ["LOGO.001"])
 
@@ -114,6 +114,13 @@ class PresenceTests(unittest.TestCase):
             except OSError:
                 self.skipTest("can't make symlinks here")
             self.assertIsNone(fl.free_local_path(d, "LOGO", "DSB"))
+
+    def test_already_in_folder_means_in_the_format_being_saved(self):
+        local = ["LOGO.DSB", "CAP.dst", "readme.txt"]
+        self.assertEqual(fl.missing_in_folder(["LOGO.001", "CAP.002"], local, "DSB"), (["CAP.002"], ["LOGO.001"]))
+        self.assertEqual(fl.missing_in_folder(["LOGO.001", "CAP.002"], local, "DST"), (["LOGO.001"], ["CAP.002"]))
+        self.assertEqual(fl.missing_in_folder(["LOGO.001", "LOGO.017"], [], ".DST"), (["LOGO.001"], ["LOGO.017"]),
+                         "two machine copies of one name are saved once")
 
     def test_never_overwrites(self):
         with tempfile.TemporaryDirectory() as d:

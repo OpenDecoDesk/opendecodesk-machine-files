@@ -19,8 +19,9 @@ install besides the app itself.
 - **Right:** the machines found on the network (↻ scans again) and the files on the one picked —
   its slot number and name.
 - **The four buttons:** copy everything, or just the selected files, in either direction. A file
-  that's already on the other side (same name, ignoring the extension and the machine's slot
-  number) is skipped, never overwritten.
+  that's already on the other side is skipped, never overwritten: on the machine, by name (ignoring
+  the extension and the machine's slot number); in the folder, by name *in the format being saved* —
+  with Save as .DST on, a `LOGO.DSB` already there doesn't stop `LOGO.DST` being made.
 - **Verify after copy** (under the buttons, on by default): each file is read back afterwards and
   checked. Sent to a machine, it's compared stitch by stitch — the machine stores every design in its
   own format (its `.DSB` form, header rewritten), so the file itself always changes but the stitches,
@@ -68,8 +69,8 @@ Python 3.9 or newer with Tk (standard library only — nothing to `pip install`)
 ```bash
 python3 -m machine_files
 ```
-On macOS with Homebrew's Python, Tk is a separate package (`brew install python-tk`); the
-python.org installer and `/usr/bin/python3` include it.
+On macOS, use the python.org installer or Homebrew's Python with Tk added (`brew install python-tk`).
+Not Apple's `/usr/bin/python3`: its Tk 8.5 is deprecated and draws the window wrongly on current macOS.
 
 ## Tests
 ```bash

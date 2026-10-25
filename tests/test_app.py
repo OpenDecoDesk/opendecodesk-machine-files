@@ -271,6 +271,28 @@ class AppTests(unittest.TestCase):
         from machine_files import settings as st
         self.assertFalse(st.load(self.settings_file)["verifyAfterCopy"])
 
+    def test_a_dsb_in_the_folder_doesnt_stop_saving_a_dst(self):
+        from tests.designs import SAMPLE, make_dsb
+        with open(os.path.join(self.folder, "CREST.DSB"), "wb") as fh:
+            fh.write(make_dsb(SAMPLE))
+        fake = FakeMachines([MACHINE_A])
+        fake.files[MACHINE_A["ip"]] = [{"name": "CREST.007"}]
+        fake.stored["CREST.007"] = make_dsb(SAMPLE, machine_style=True)
+        app = self.make(fake, watch_ms=0)
+        app.folder_var.set(self.folder)
+        app.load_folder()
+        app.copy_all_from_machine()  # Save as .DST off: CREST.DSB is already here
+        self.settle(app)
+        self.assertIn("Nothing to copy — 1 file(s) already in the folder", app.status_var.get())
+        app.dst_chk.invoke()          # on: a .DST is a different file
+        app.copy_all_from_machine()
+        self.settle(app)
+        self.assertIn("CREST.DST", os.listdir(self.folder))
+        self.assertIn("CREST.DSB", os.listdir(self.folder))
+        app.copy_all_from_machine()   # and now that the .DST is here too, nothing more to do
+        self.settle(app)
+        self.assertIn("Nothing to copy", app.status_var.get())
+
     def test_save_as_dst_from_the_machine(self):
         from machine_files import settings as st
         from machine_files import stitches
@@ -327,8 +349,10 @@ class AppTests(unittest.TestCase):
         self.assertIn("Copied 1 file", app.status_var.get())
 
     def test_copy_all_from_machine_saves_dsb_and_skips_what_is_there(self):
+        # The folder has LOGO.DST and CAP.dsb: CAP is already here as a .DSB and is skipped; LOGO isn't
+        # (only as .DST), so LOGO.DSB is saved beside it.
         fake = FakeMachines([MACHINE_A])
-        fake.files[MACHINE_A["ip"]] = [{"name": "LOGO.001"}, {"name": "NEW DESIGN.003"},
+        fake.files[MACHINE_A["ip"]] = [{"name": "LOGO.001"}, {"name": "CAP.002"}, {"name": "NEW DESIGN.003"},
                                         {"name": "马头机~1.008"}]
         app = self.make(fake)
         app.folder_var.set(self.folder)
@@ -336,10 +360,10 @@ class AppTests(unittest.TestCase):
         app.copy_all_from_machine()
         self.settle(app)
         self.assertEqual(sorted(os.listdir(self.folder)),
-                         ["CAP.dsb", "LOGO.DST", "NEW DESIGN.DSB", "readme.txt", "马头机~1.DSB"])
+                         ["CAP.dsb", "LOGO.DSB", "LOGO.DST", "NEW DESIGN.DSB", "readme.txt", "马头机~1.DSB"])
         with open(os.path.join(self.folder, "NEW DESIGN.DSB"), "rb") as fh:
             self.assertEqual(fh.read(), b"LA:NEW DESIGN.003")
-        self.assertIn("Copied 2 file", app.status_var.get())
+        self.assertIn("Copied 3 file", app.status_var.get())
         self.assertIn("1 already there", app.status_var.get())
         self.assertIn("NEW DESIGN.DSB", app.local_files)  # the folder list was re-read
 
