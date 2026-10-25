@@ -179,7 +179,7 @@ class AppTests(unittest.TestCase):
             os.mkdir(legacy)
         except OSError:
             self.skipTest("this file system doesn't allow a name ending in a space")
-        if not os.path.isdir(legacy):
+        if "Legacy " not in os.listdir(self.folder):  # Windows quietly makes "Legacy"
             self.skipTest("this file system doesn't keep a trailing space")
         with open(os.path.join(legacy, "OLD LOGO.DST"), "wb") as fh:
             fh.write(b"x")
