@@ -148,14 +148,23 @@ class App:
         self.busy = True
         self._update_buttons()
 
+        # The thread must never hold the last reference to the window: Tk objects freed on another
+        # thread abort the program ("Tcl_AsyncDelete: async handler deleted by the wrong thread"). So it
+        # gets only the queue, and drops `work` and `done` (closures over the window) before handing back.
+        events = self._events
+        job = [work, done]
+
         def target():
             try:
-                result, error = work(lambda msg: self._events.put(("status", msg))), None
+                result, error = job[0](lambda msg: events.put(("status", msg))), None
             except Exception as e:  # noqa: BLE001 — every failure is shown to the operator
                 result, error = None, e
-            self._events.put(("done", done, result, error))
+            item = ("done", job[1], result, error)
+            job.clear()
+            events.put(item)
 
-        threading.Thread(target=target, daemon=True).start()
+        self._worker = threading.Thread(target=target, daemon=True)
+        self._worker.start()
 
     def _poll(self):
         try:
@@ -165,6 +174,9 @@ class App:
                     self.status(ev[1])
                 else:
                     _, done, result, error = ev
+                    worker, self._worker = getattr(self, "_worker", None), None
+                    if worker is not None:
+                        worker.join(5)  # it has handed back; let it finish so it lets go of nothing later
                     self.busy = False
                     done(result, error)
                     self._update_buttons()
