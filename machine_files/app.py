@@ -79,9 +79,14 @@ class App:
         self.folder_btn.grid(row=0, column=1, padx=(6, 0))
         self.folder_refresh_btn = ttk.Button(top_left, text="↻", width=3, command=self.refresh_folder)
         self.folder_refresh_btn.grid(row=0, column=2, padx=(4, 0))
+        self.folder_up_btn = ttk.Button(top_left, text="↑", width=3, command=self.folder_up)
+        self.folder_up_btn.grid(row=0, column=3, padx=(4, 0))
 
-        self.local_tree = self._tree(outer, [("name", "Name", 260, "w")])
+        self.local_tree = self._tree(outer, [], tree_column=("Name", 260))
         self.local_tree.master.grid(row=1, column=0, sticky="nsew")
+        self.local_folders = []     # subfolders shown at the top of the left list
+        self.local_tree.bind("<Double-1>", self._open_folder_row)
+        self.local_tree.bind("<Return>", self._open_folder_row)
 
         # Middle: the four copy buttons, stacked.
         mid = ttk.Frame(outer, padding=(10, 0))
@@ -133,12 +138,17 @@ class App:
         for tree in (self.local_tree, self.machine_tree):
             tree.bind("<<TreeviewSelect>>", lambda e: self._update_buttons())
 
-    def _tree(self, parent, columns):
+    def _tree(self, parent, columns, tree_column=None):
+        """A list with headings. `tree_column` (title, width) puts the first column in the tree column,
+        which can show an icon (the folder rows)."""
         frame = ttk.Frame(parent)
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(0, weight=1)
-        tree = ttk.Treeview(frame, columns=[c[0] for c in columns], show="headings",
-                            selectmode="extended")
+        tree = ttk.Treeview(frame, columns=[c[0] for c in columns],
+                            show="tree headings" if tree_column else "headings", selectmode="extended")
+        if tree_column:
+            tree.heading("#0", text=tree_column[0], anchor="w")
+            tree.column("#0", width=tree_column[1], stretch=True)
         for key, title, width, anchor in columns:
             tree.heading(key, text=title, anchor=anchor)
             tree.column(key, width=width, anchor=anchor, stretch=(key == "name"))
@@ -268,7 +278,11 @@ class App:
             log.info("folder: %s (%d design files)", folder, len(self.local_files))
             self.settings["lastFolder"] = folder
             self._save_settings()
-            self.status(f"{len(self.local_files)} design file(s) in the folder.")
+            self.status(self._folder_count_text())
+
+    def _folder_count_text(self):
+        subs = f"{len(self.local_folders)} folder(s), " if self.local_folders else ""
+        return f"{subs}{len(self.local_files)} design file(s) in the folder."
 
     def refresh_folder(self):
         """The ↻ next to the folder: read it again now."""
@@ -278,23 +292,49 @@ class App:
     def _read_folder(self, folder):
         """Lists `folder` into the left pane, keeping the files that were selected selected. False if
         it couldn't be read (the list is then empty)."""
-        keep = {self.local_files[int(i)] for i in self.local_tree.selection() if int(i) < len(self.local_files)}
+        keep = set(self._selected(self.local_tree, self.local_files))
         ok = True
-        self.local_files = []
+        self.local_files, self.local_folders = [], []
         if folder:
             try:
                 self.local_files = fl.list_design_files(folder)
+                self.local_folders = fl.list_subfolders(folder)
             except OSError as e:
                 self.status(f"Can't read that folder: {e}")
                 ok = False
         self._shown_folder = folder if ok else ""
         self._folder_sig = fl.folder_signature(folder) if folder and ok else None
-        self._fill(self.local_tree, [(n,) for n in self.local_files])
+        tree = self.local_tree
+        tree.delete(*tree.get_children())
+        for name in self.local_folders:
+            tree.insert("", "end", iid="dir:" + name, text=name, image=self._folder_img)
+        for i, name in enumerate(self.local_files):
+            tree.insert("", "end", iid=str(i), text=name)
         reselect = [str(i) for i, n in enumerate(self.local_files) if n in keep]
         if reselect:
-            self.local_tree.selection_set(reselect)
+            tree.selection_set(reselect)
         self._update_buttons()
         return ok
+
+    def open_folder(self, path):
+        """Show another folder (a subfolder or the one above) and remember it."""
+        self.folder_var.set(path)
+        self.load_folder()
+
+    def _open_folder_row(self, event=None):
+        """Double-click / Enter on a folder row opens it."""
+        tree = self.local_tree
+        by_key = event is None or getattr(event, "keysym", "") == "Return"
+        iid = tree.focus() if by_key else tree.identify_row(event.y)
+        if iid and iid.startswith("dir:") and self._shown_folder:
+            self.open_folder(os.path.join(self._shown_folder, iid[4:]))
+            return "break"
+
+    def folder_up(self):
+        """↑: the folder one level up."""
+        parent = fl.parent_folder(self._shown_folder) if self._shown_folder else None
+        if parent:
+            self.open_folder(parent)
 
     def _watch_folder(self):
         """Every WATCH_MS: if the folder's design files changed (a file added, removed or replaced),
@@ -413,12 +453,14 @@ class App:
         rules = (
             (self.btn_all_from, idle and has_folder and bool(self.machine_rows)),
             (self.btn_sel_from, idle and has_folder and bool(self.machine_tree.selection())),
-            (self.btn_sel_to, idle and has_machine and bool(self.local_tree.selection())),
+            (self.btn_sel_to, idle and has_machine and bool(self._selected(self.local_tree, self.local_files))),
             (self.btn_all_to, idle and has_machine and bool(self.local_files)),
         )
         for btn, on in rules:
             btn.state(["!disabled"] if on else ["disabled"])
         self.rescan_btn.state(["!disabled"] if idle else ["disabled"])
+        can_go_up = bool(self._shown_folder and fl.parent_folder(self._shown_folder))
+        self.folder_up_btn.state(["!disabled"] if can_go_up else ["disabled"])
 
     def _dst_changed(self):
         self.settings["saveAsDst"] = bool(self.dst_var.get())
@@ -453,7 +495,8 @@ class App:
         return results
 
     def _selected(self, tree, items):
-        return [items[int(iid)] for iid in tree.selection()]
+        """The selected rows' items — file rows only (folder rows are "dir:<name>")."""
+        return [items[int(iid)] for iid in tree.selection() if iid.isdigit() and int(iid) < len(items)]
 
     def copy_all_to_machine(self):
         self._send(list(self.local_files))

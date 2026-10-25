@@ -128,7 +128,70 @@ class AppTests(unittest.TestCase):
         self.assertTrue(self.enabled(app.btn_sel_to))
 
     def names_shown(self, app):
-        return [app.local_tree.item(i)["values"][0] for i in app.local_tree.get_children()]
+        """The file rows of the left list (folder rows are "dir:<name>")."""
+        return [app.local_tree.item(i)["text"] for i in app.local_tree.get_children() if not i.startswith("dir:")]
+
+    def folders_shown(self, app):
+        return [app.local_tree.item(i)["text"] for i in app.local_tree.get_children() if i.startswith("dir:")]
+
+    def test_folders_listed_first_and_opened_by_double_click_or_enter(self):
+        os.makedirs(os.path.join(self.folder, "Caps", "Winter"))
+        os.mkdir(os.path.join(self.folder, "shirts"))
+        with open(os.path.join(self.folder, "Caps", "CAP FRONT.DST"), "wb") as fh:
+            fh.write(b"x")
+        app = self.make(FakeMachines([MACHINE_A]), watch_ms=0)
+        app.folder_var.set(self.folder)
+        app.load_folder()
+        kids = app.local_tree.get_children()
+        self.assertEqual(list(kids[:2]), ["dir:Caps", "dir:shirts"], "folders first, sorted")
+        self.assertEqual(self.names_shown(app), ["CAP.dsb", "LOGO.DST"])
+        self.assertTrue(app.local_tree.item("dir:Caps")["image"], "folders have an icon")
+        self.assertIn("2 folder(s), 2 design file(s)", app.status_var.get())
+        # Selecting a folder isn't a file to send.
+        app.local_tree.selection_set(["dir:Caps"])
+        self.root.update()
+        self.assertTrue(app.btn_sel_to.instate(["disabled"]))
+        # Enter on the focused folder row opens it.
+        app.local_tree.focus("dir:Caps")
+        app._open_folder_row(None)
+        caps = os.path.join(self.folder, "Caps")
+        self.assertEqual(app.folder_var.get(), caps)
+        self.assertEqual(self.folders_shown(app), ["Winter"])
+        self.assertEqual(self.names_shown(app), ["CAP FRONT.DST"])
+        from machine_files import settings as st
+        self.assertEqual(st.load(self.settings_file)["lastFolder"], caps, "remembered")
+        # A double-click on a row opens it.
+        self.root.update()
+        bbox = app.local_tree.bbox("dir:Winter")
+        if bbox:  # only when drawn (not in every headless run)
+            class Ev:
+                keysym, y = "", bbox[1] + 2
+            app._open_folder_row(Ev())
+            self.assertEqual(app.folder_var.get(), os.path.join(caps, "Winter"))
+            app.folder_up()
+
+    def test_up_a_level(self):
+        sub = os.path.join(self.folder, "Caps")
+        os.mkdir(sub)
+        app = self.make(FakeMachines([MACHINE_A]), watch_ms=0)
+        app.folder_var.set(sub)
+        app.load_folder()
+        self.assertFalse(app.folder_up_btn.instate(["disabled"]))
+        app.folder_up_btn.invoke()
+        self.assertEqual(app.folder_var.get(), self.folder)
+        self.assertIn("LOGO.DST", self.names_shown(app))
+        self.assertEqual(self.folders_shown(app), ["Caps"])
+        app.folder_var.set(os.path.abspath(os.sep))
+        app.load_folder()
+        self.assertTrue(app.folder_up_btn.instate(["disabled"]), "nothing above the top of the drive")
+
+    def test_watcher_shows_a_new_folder(self):
+        app = self.make(FakeMachines([MACHINE_A]), watch_ms=0)
+        app.folder_var.set(self.folder)
+        app.load_folder()
+        os.mkdir(os.path.join(self.folder, "New jobs"))
+        app._watch_folder()
+        self.assertEqual(self.folders_shown(app), ["New jobs"])
 
     def test_folder_watcher_picks_up_new_and_removed_files(self):
         app = self.make(FakeMachines([MACHINE_A]), watch_ms=0)  # watcher driven by hand below

@@ -32,13 +32,33 @@ class FolderSignatureTests(unittest.TestCase):
             os.remove(os.path.join(d, "A.DST"))
             self.assertEqual(fl.folder_signature(d), sig0)
 
-    def test_ignores_other_files_and_reports_an_unreadable_folder(self):
+    def test_ignores_other_files_sees_folders_and_reports_an_unreadable_folder(self):
         with tempfile.TemporaryDirectory() as d:
             sig0 = fl.folder_signature(d)
             open(os.path.join(d, "notes.txt"), "w").close()
-            os.mkdir(os.path.join(d, "sub.dst"))
-            self.assertEqual(fl.folder_signature(d), sig0)
+            os.mkdir(os.path.join(d, ".hidden"))
+            self.assertEqual(fl.folder_signature(d), sig0, "other files and hidden folders don't count")
+            os.mkdir(os.path.join(d, "Caps"))
+            self.assertNotEqual(fl.folder_signature(d), sig0, "a new folder does (so it shows up)")
             self.assertIsNone(fl.folder_signature(os.path.join(d, "missing")))
+
+
+class SubfolderTests(unittest.TestCase):
+    def test_folders_sorted_without_hidden_or_system_ones(self):
+        with tempfile.TemporaryDirectory() as d:
+            for n in ("caps", "Shirts", ".git", "$RECYCLE.BIN", "System Volume Information"):
+                os.mkdir(os.path.join(d, n))
+            open(os.path.join(d, "LOGO.DST"), "w").close()
+            self.assertEqual(fl.list_subfolders(d), ["caps", "Shirts"])
+
+    def test_parent_folder(self):
+        with tempfile.TemporaryDirectory() as d:
+            sub = os.path.join(d, "a", "b")
+            os.makedirs(sub)
+            self.assertEqual(fl.parent_folder(sub), os.path.join(d, "a"))
+            self.assertEqual(fl.parent_folder(sub + os.sep), os.path.join(d, "a"))
+        top = os.path.abspath(os.sep)
+        self.assertIsNone(fl.parent_folder(top), "nothing above the top of the drive")
 
 
 class MachineNameTests(unittest.TestCase):

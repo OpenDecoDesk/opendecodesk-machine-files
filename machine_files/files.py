@@ -16,16 +16,46 @@ def list_design_files(folder):
     return sorted(names, key=str.lower)
 
 
+# Folders that aren't somewhere to keep designs: hidden ones, and Windows' own on every drive.
+_SKIP_FOLDERS = {"$recycle.bin", "system volume information", "recovery", "config.msi"}
+
+
+def list_subfolders(folder):
+    """The folders directly inside `folder`, sorted by name — not hidden ones (".git", "$RECYCLE.BIN")
+    or Windows' system folders. Raises OSError if the folder can't be read."""
+    names = []
+    for entry in os.scandir(folder):
+        name = entry.name
+        if name.startswith((".", "$")) or name.lower() in _SKIP_FOLDERS:
+            continue
+        try:
+            if entry.is_dir():
+                names.append(name)
+        except OSError:
+            continue
+    return sorted(names, key=str.lower)
+
+
+def parent_folder(folder):
+    """The folder one level up, or None at the top of a drive."""
+    path = os.path.abspath(folder)
+    parent = os.path.dirname(path.rstrip("\\/") or path)
+    if not parent or os.path.normcase(parent) == os.path.normcase(path):
+        return None
+    return parent
+
+
 def folder_signature(folder):
-    """What the folder's design files look like right now — each one's name, size and modified time —
-    so a change (a file added, removed, replaced or still being written) shows as a different value.
-    None if the folder can't be read."""
+    """What the folder's design files and subfolders look like right now — each file's name, size and
+    modified time, each subfolder's name — so a change (a file added, removed, replaced or still being
+    written; a folder made or removed) shows as a different value. None if the folder can't be read."""
     try:
         sig = []
         for entry in os.scandir(folder):
             if os.path.splitext(entry.name)[1].lower() in DESIGN_EXTS and entry.is_file():
                 st = entry.stat()
                 sig.append((entry.name, st.st_size, st.st_mtime_ns))
+        sig += [("/", name, 0) for name in list_subfolders(folder)]
         return frozenset(sig)
     except OSError:
         return None

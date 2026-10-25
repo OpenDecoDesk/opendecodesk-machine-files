@@ -6,7 +6,7 @@ install besides the app itself.
 
 ```
 ┌ Folder ───────────────────┐               ┌ Machine ──────────────────────┐
-│ [/path/to/designs][▤][↻]│  ◀◀ Copy all   │ [1501ultra — 192.168.1.40 ▾][↻]│
+│ [/path/designs][▤][↻][↑]│  ◀◀ Copy all   │ [1501ultra — 192.168.1.40 ▾][↻]│
 │ LOGO.DST                  │  ◀ Copy sel.   │ Slot  Name                      │
 │ NAME_CAP.DSB              │  Copy sel. ▶   │   12  LOGO                      │
 │                           │  Copy all ▶▶   │   13  CREST                     │
@@ -15,7 +15,8 @@ install besides the app itself.
 
 - **Left:** a folder (type a path and press Enter, or click the folder button). Only `.dst` and `.dsb` files are
   listed. The list updates by itself when files are added, changed or removed (checked every 2 seconds);
-  ↻ beside the folder button reads it again straight away.
+  ↻ beside the folder button reads it again straight away. Subfolders are listed at the top: double-click
+  one (or press Enter) to go into it, and ↑ goes up a level.
 - **Right:** the machines found on the network (↻ scans again) and the files on the one picked —
   its slot number and name.
 - **The four buttons:** copy everything, or just the selected files, in either direction. A file
