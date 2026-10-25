@@ -171,6 +171,36 @@ class AppTests(unittest.TestCase):
         self.assertEqual(app.folder_var.get(), self.folder)
         self.assertIn("LOGO.DST", self.names_shown(app))
 
+    def test_a_folder_whose_name_ends_in_a_space(self):
+        # The real case: "Embroidery legacy " (trailing space) said "No such file or directory" because
+        # the path was trimmed. (Windows doesn't allow such names, so this runs where they can exist.)
+        legacy = os.path.join(self.folder, "Legacy ")
+        try:
+            os.mkdir(legacy)
+        except OSError:
+            self.skipTest("this file system doesn't allow a name ending in a space")
+        if not os.path.isdir(legacy):
+            self.skipTest("this file system doesn't keep a trailing space")
+        with open(os.path.join(legacy, "OLD LOGO.DST"), "wb") as fh:
+            fh.write(b"x")
+        app = self.make(FakeMachines([MACHINE_A]), watch_ms=0)
+        app.folder_var.set(self.folder)
+        app.load_folder()
+        self.assertIn(("dir:Legacy ", "Legacy "), self.rows(app))
+        app.local_tree.focus("dir:Legacy ")
+        app._open_folder_row(None)
+        self.assertEqual(app.folder_var.get(), legacy)
+        self.assertEqual(self.names_shown(app), ["OLD LOGO.DST"])
+        self.assertNotIn("Can't read", app.status_var.get())
+        app.refresh_folder()
+        self.assertEqual(self.names_shown(app), ["OLD LOGO.DST"], "↻ keeps the space too")
+
+    def test_a_pasted_path_with_stray_spaces_still_works(self):
+        app = self.make(FakeMachines([MACHINE_A]), watch_ms=0)
+        app.folder_var.set("  " + self.folder + "  ")
+        app.load_folder()
+        self.assertEqual(self.names_shown(app), ["CAP.dsb", "LOGO.DST"])
+
     def test_no_dotdot_at_the_top_of_a_drive(self):
         app = self.make(FakeMachines([MACHINE_A]), watch_ms=0)
         app.folder_var.set(os.path.abspath(os.sep))

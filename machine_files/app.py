@@ -264,6 +264,14 @@ class App:
         messagebox.showerror(title, str(error), parent=self.root)
 
     # ---- folder side ---------------------------------------------------------------------
+    def _folder_path(self):
+        """The folder in the path box. Exactly as written when that folder exists — names can end in a
+        space ("Embroidery legacy ") — else with stray spaces at the ends trimmed (a pasted path)."""
+        raw = self.folder_var.get()
+        if raw and os.path.isdir(raw):
+            return raw
+        return raw.strip()
+
     def pick_folder(self):
         start = self.folder_var.get() if os.path.isdir(self.folder_var.get()) else os.path.expanduser("~")
         chosen = filedialog.askdirectory(parent=self.root, initialdir=start, title="Choose the designs folder")
@@ -273,7 +281,7 @@ class App:
 
     def load_folder(self):
         """Show the folder typed or picked (and remember it)."""
-        folder = self.folder_var.get().strip()
+        folder = self._folder_path()
         if self._read_folder(folder) and folder:
             log.info("folder: %s (%d design files)", folder, len(self.local_files))
             self.settings["lastFolder"] = folder
@@ -286,7 +294,7 @@ class App:
 
     def refresh_folder(self):
         """The ↻ next to the folder: read it again now."""
-        if self._read_folder(self.folder_var.get().strip()):
+        if self._read_folder(self._folder_path()):
             self.status(f"Refreshed — {len(self.local_files)} design file(s) in the folder.")
 
     def _read_folder(self, folder):
@@ -452,7 +460,7 @@ class App:
 
     # ---- the four buttons ----------------------------------------------------------------
     def _update_buttons(self):
-        has_folder = bool(self.folder_var.get().strip()) and os.path.isdir(self.folder_var.get().strip())
+        has_folder = bool(self._folder_path()) and os.path.isdir(self._folder_path())
         idle = not self.busy
         has_machine = self.machine is not None
         rules = (
@@ -520,7 +528,7 @@ class App:
         if not to_send:
             self.status(f"Nothing to copy — {len(skipped)} file(s) already on the machine.")
             return
-        folder = self.folder_var.get().strip()
+        folder = self._folder_path()
         ip = self.machine["ip"]
         log.info("copy to machine %s: %d file(s), %d already there", ip, len(to_send), len(skipped))
         note = f"\n\n{len(skipped)} already on the machine will be skipped." if skipped else ""
@@ -577,7 +585,7 @@ class App:
         self._run(work, done)
 
     def _receive(self, stored_names):
-        folder = self.folder_var.get().strip()
+        folder = self._folder_path()
         if not stored_names or not self.machine or not os.path.isdir(folder):
             return
         as_dst = bool(self.dst_var.get())
