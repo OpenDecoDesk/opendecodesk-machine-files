@@ -13,6 +13,7 @@ from . import diagnostics
 from . import files as fl
 from . import protocol
 from . import settings as st
+from . import stitches
 
 log = logging.getLogger("machine_files.app")
 
@@ -86,13 +87,19 @@ class App:
         mid = ttk.Frame(outer, padding=(10, 0))
         mid.grid(row=1, column=1, sticky="ns")
         mid.rowconfigure(0, weight=1)
-        mid.rowconfigure(5, weight=1)
+        mid.rowconfigure(6, weight=1)
         self.btn_all_from = ttk.Button(mid, text="◀◀  Copy all", command=self.copy_all_from_machine)
         self.btn_sel_from = ttk.Button(mid, text="◀  Copy selected", command=self.copy_selected_from_machine)
         self.btn_sel_to = ttk.Button(mid, text="Copy selected  ▶", command=self.copy_selected_to_machine)
         self.btn_all_to = ttk.Button(mid, text="Copy all  ▶▶", command=self.copy_all_to_machine)
         for i, b in enumerate((self.btn_all_from, self.btn_sel_from, self.btn_sel_to, self.btn_all_to)):
             b.grid(row=i + 1, column=0, sticky="ew", pady=4)
+        # Read each file back after copying and check it: to the machine, the same stitches (the machine
+        # stores designs in its own format, so the bytes always change); from it, the same bytes.
+        self.verify_var = tk.BooleanVar(value=bool(self.settings.get("verifyAfterCopy", True)))
+        self.verify_chk = ttk.Checkbutton(mid, text="Verify after copy", variable=self.verify_var,
+                                          command=self._verify_changed)
+        self.verify_chk.grid(row=5, column=0, sticky="w", pady=(10, 0))
 
         # Right: machine picker + rescan, then the machine's files (slot, name).
         top_right = ttk.Frame(outer)
@@ -395,6 +402,33 @@ class App:
             btn.state(["!disabled"] if on else ["disabled"])
         self.rescan_btn.state(["!disabled"] if idle else ["disabled"])
 
+    def _verify_changed(self):
+        self.settings["verifyAfterCopy"] = bool(self.verify_var.get())
+        self._save_settings()
+        log.info("verify after copy: %s", "on" if self.verify_var.get() else "off")
+
+    def _check_sent(self, ip, sent, progress):
+        """Read each file just sent back off the machine and compare its stitches with what was sent.
+        → [{name, stored, ok, text}]"""
+        listing = self.proto.list_machine_dir(ip)
+        results = []
+        for i, (name, data) in enumerate(sent, 1):
+            progress(f"Verifying {name} ({i} of {len(sent)})…")
+            stored = fl.newest_stored_for(name, listing)
+            if not stored:
+                results.append({"name": name, "stored": None, "ok": False,
+                                "text": "isn't on the machine (very small, one-block files may not be saved)"})
+                continue
+            try:
+                back = self.proto.download_file(ip, stored)["bytes"]
+                cmp = stitches.compare(data, name, back, "returned.dsb")
+                results.append({"name": name, "stored": stored, "ok": cmp["match"], "text": cmp["summary"]})
+            except Exception as e:  # noqa: BLE001 — reported per file
+                results.append({"name": name, "stored": stored, "ok": False, "text": f"couldn't be checked: {e}"})
+            log.info("verify %s (%s): %s — %s", name, stored, "OK" if results[-1]["ok"] else "PROBLEM",
+                     results[-1]["text"])
+        return results
+
     def _selected(self, tree, items):
         return [items[int(iid)] for iid in tree.selection()]
 
@@ -425,6 +459,8 @@ class App:
                                    f"{self._machine_label(self.machine)}?{note}", parent=self.root):
             return
 
+        verify = bool(self.verify_var.get())
+
         def work(progress):
             sent = []
             for i, name in enumerate(to_send, 1):
@@ -435,19 +471,32 @@ class App:
                     self.proto.send_design_to_machine(ip, name, data)
                 except Exception as e:
                     raise RuntimeError(f"{e}\n\nSent before this: {len(sent)} of {len(to_send)}.")
-                sent.append(name)
-            return sent
+                sent.append((name, data))
+            checks = self._check_sent(ip, sent, progress) if verify else None
+            return [n for n, _ in sent], checks
 
-        def done(sent, error):
+        def done(result, error):
+            sent, checks = result if result else ([], None)
+
             def after_list(listing):
                 if error:
                     self._error("Copy to machine", error)
                     return
-                there = {fl.base_key(f.get("name", "")) for f in (listing or [])}
-                missing = [n for n in sent if fl.base_key(n) not in there] if listing is not None else []
                 msg = f"Copied {len(sent)} file(s) to the machine."
                 if skipped:
                     msg += f" {len(skipped)} already there, skipped."
+                if checks is not None:
+                    bad = [c for c in checks if not c["ok"]]
+                    if bad:
+                        self.status(msg + f" Verify: {len(bad)} of {len(checks)} didn't match.")
+                        messagebox.showwarning(APP_TITLE, "Verify after copy — these didn't come back the same:\n\n"
+                                               + "\n".join(f"{c['name']}: {c['text']}" for c in bad), parent=self.root)
+                    else:
+                        self.status(msg + f" Verified: each came back with the same stitches"
+                                    f" (the machine stores them in its own format, so the files themselves differ).")
+                    return
+                there = {fl.base_key(f.get("name", "")) for f in (listing or [])}
+                missing = [n for n in sent if fl.base_key(n) not in there] if listing is not None else []
                 self.status(msg)
                 if missing:
                     messagebox.showwarning(APP_TITLE, "Sent, but not showing on the machine:\n"
@@ -467,10 +516,11 @@ class App:
             self.status(f"Nothing to copy — {len(skipped)} file(s) already in the folder.")
             return
         ip = self.machine["ip"]
+        verify = bool(self.verify_var.get())
         log.info("copy from machine %s: %d file(s), %d already in the folder", ip, len(to_copy), len(skipped))
 
         def work(progress):
-            saved, taken = [], []
+            saved, taken, bad = [], [], []
             for i, stored in enumerate(to_copy, 1):
                 progress(f"Copying {stored} from the machine ({i} of {len(to_copy)})…")
                 got = self.proto.download_file(ip, stored)
@@ -483,17 +533,36 @@ class App:
                 with open(path, "xb") as fh:
                     fh.write(got["bytes"])
                 saved.append(os.path.basename(path))
-            return saved, taken
+                if verify:
+                    # Read it off the machine a second time, and the saved file back from disk: both
+                    # must be the same bytes (nothing is converted on the way to this computer).
+                    progress(f"Verifying {stored} ({i} of {len(to_copy)})…")
+                    again = self.proto.download_file(ip, stored)["bytes"]
+                    with open(path, "rb") as fh:
+                        on_disk = fh.read()
+                    problem = ("a second read from the machine gave different bytes" if again != got["bytes"]
+                               else "the saved file doesn't match what was received" if on_disk != got["bytes"]
+                               else None)
+                    if problem:
+                        bad.append(f"{os.path.basename(path)}: {problem}")
+                    log.info("verify %s: %s", stored, problem or "OK — same bytes on a second read and on disk")
+            return saved, taken, (bad if verify else None)
 
         def done(result, error):
             self.load_folder()
             if error:
                 self._error("Copy from machine", error)
                 return
-            saved, taken = result
+            saved, taken, bad = result
             msg = f"Copied {len(saved)} file(s) into the folder."
             if skipped or taken:
                 msg += f" {len(skipped) + len(taken)} already there, skipped."
+            if bad:
+                messagebox.showwarning(APP_TITLE, "Verify after copy — these didn't match:\n\n" + "\n".join(bad),
+                                       parent=self.root)
+                msg += f" Verify: {len(bad)} didn't match."
+            elif bad is not None and saved:
+                msg += " Verified: each matches the machine's copy exactly."
             self.status(msg)
 
         self._run(work, done)

@@ -25,6 +25,7 @@ class FakeMachines:
         self.found = found
         self.files = {m["ip"]: [] for m in found}
         self.sent = []
+        self.stored = {}
 
     def discover_machines(self):
         return list(self.found)
@@ -38,9 +39,21 @@ class FakeMachines:
     def send_design_to_machine(self, ip, name, data):
         self.sent.append((ip, name, data))
         listing = self.files.setdefault(ip, [])
-        listing.append({"name": f"{name.rsplit('.', 1)[0]}.{len(listing) + 1:03d}", "size": len(data)})
+        stored = f"{name.rsplit('.', 1)[0]}.{len(listing) + 1:03d}"
+        listing.append({"name": stored, "size": len(data)})
+        self.stored[stored] = self.convert(data, name)
+
+    stored_reads = 0
+
+    def convert(self, data, name):
+        """What the machine keeps: a real design comes back re-encoded as .DSB; anything else as-is."""
+        from tests.designs import SAMPLE, make_dsb
+        return make_dsb(SAMPLE, machine_style=True) if data.startswith(b"LA:") else data
 
     def download_file(self, ip, stored):
+        self.stored_reads += 1
+        if stored in self.stored:
+            return {"bytes": self.stored[stored], "ext": "DSB"}
         if stored.startswith("BROKEN"):
             raise RuntimeError(f"The machine refused to send “{stored}”.")
         return {"bytes": b"LA:" + stored.encode(), "ext": "DSB"}
@@ -194,6 +207,76 @@ class AppTests(unittest.TestCase):
         app = self.make(fake, watch_ms=0)
         self.assertEqual(list(app.machine_combo["values"]), ["1201plus — 10.0.0.5"])
         self.assertIn("firewall", app.status_var.get())
+
+    def test_verify_after_copy_to_machine(self):
+        from tests.designs import SAMPLE, make_dst
+        with open(os.path.join(self.folder, "REAL.DST"), "wb") as fh:
+            fh.write(make_dst(SAMPLE, label="REAL"))
+        fake = FakeMachines([MACHINE_A])
+        fake.files[MACHINE_A["ip"]] = [{"name": "LOGO.001"}, {"name": "CAP.002"}]
+        app = self.make(fake, watch_ms=0)
+        self.assertTrue(app.verify_var.get(), "on by default")
+        app.folder_var.set(self.folder)
+        app.load_folder()
+        app.local_tree.selection_set([str(app.local_files.index("REAL.DST"))])
+        with mock.patch.object(self.app_mod.messagebox, "askyesno", return_value=True), \
+                mock.patch.object(self.app_mod.messagebox, "showwarning") as warn:
+            app.copy_selected_to_machine()
+            self.settle(app)
+        self.assertFalse(warn.called)
+        self.assertEqual(fake.stored_reads, 1, "the file was read back once")
+        self.assertIn("Verified: each came back with the same stitches", app.status_var.get())
+
+    def test_verify_reports_a_file_that_came_back_different(self):
+        from tests.designs import SAMPLE, make_dsb, make_dst
+        with open(os.path.join(self.folder, "REAL.DST"), "wb") as fh:
+            fh.write(make_dst(SAMPLE))
+        fake = FakeMachines([MACHINE_A])
+        broken = list(SAMPLE)
+        broken[5] = ("s", 99, 5)
+        fake.convert = lambda data, name: make_dsb(broken, machine_style=True)
+        app = self.make(fake, watch_ms=0)
+        app.folder_var.set(self.folder)
+        app.load_folder()
+        app.local_tree.selection_set([str(app.local_files.index("REAL.DST"))])
+        with mock.patch.object(self.app_mod.messagebox, "askyesno", return_value=True), \
+                mock.patch.object(self.app_mod.messagebox, "showwarning") as warn:
+            app.copy_selected_to_machine()
+            self.settle(app)
+        self.assertTrue(warn.called)
+        self.assertIn("REAL.DST: Different", warn.call_args[0][1])
+        self.assertIn("first difference at stitch 6", warn.call_args[0][1])
+        self.assertIn("didn't match", app.status_var.get())
+
+    def test_verify_off_reads_nothing_back_and_is_remembered(self):
+        fake = FakeMachines([MACHINE_A])
+        app = self.make(fake, watch_ms=0)
+        app.verify_chk.invoke()
+        self.assertFalse(app.verify_var.get())
+        app.folder_var.set(self.folder)
+        app.load_folder()
+        with mock.patch.object(self.app_mod.messagebox, "askyesno", return_value=True), \
+                mock.patch.object(self.app_mod.messagebox, "showwarning"):
+            app.copy_all_to_machine()
+            self.settle(app)
+        self.assertEqual(fake.stored_reads, 0)
+        self.assertNotIn("Verified", app.status_var.get())
+        from machine_files import settings as st
+        self.assertFalse(st.load(self.settings_file)["verifyAfterCopy"])
+
+    def test_verify_after_copy_from_machine_reads_twice(self):
+        fake = FakeMachines([MACHINE_A])
+        fake.files[MACHINE_A["ip"]] = [{"name": "NEW DESIGN.003"}]
+        app = self.make(fake, watch_ms=0)
+        app.folder_var.set(self.folder)
+        app.load_folder()
+        reads = []
+        real = fake.download_file
+        fake.download_file = lambda ip, stored: reads.append(stored) or real(ip, stored)
+        app.copy_all_from_machine()
+        self.settle(app)
+        self.assertEqual(reads, ["NEW DESIGN.003", "NEW DESIGN.003"])
+        self.assertIn("Verified: each matches the machine's copy exactly", app.status_var.get())
 
     def test_copy_all_to_machine_skips_what_is_there(self):
         fake = FakeMachines([MACHINE_A])

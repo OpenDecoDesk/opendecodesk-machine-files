@@ -21,6 +21,11 @@ install besides the app itself.
 - **The four buttons:** copy everything, or just the selected files, in either direction. A file
   that's already on the other side (same name, ignoring the extension and the machine's slot
   number) is skipped, never overwritten.
+- **Verify after copy** (under the buttons, on by default): each file is read back afterwards and
+  checked. Sent to a machine, it's compared stitch by stitch — the machine stores every design in its
+  own format (its `.DSB` form, header rewritten), so the file itself always changes but the stitches,
+  colour changes and size must not. Copied off a machine, it's read a second time and must match the
+  saved file byte for byte.
 - It remembers the last folder and machine. The machine is remembered by its network card's MAC
   address, so it's still picked when its IP address changes.
 

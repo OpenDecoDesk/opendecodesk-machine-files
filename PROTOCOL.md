@@ -171,6 +171,14 @@ ASCII name**, not by an index.
   Multi-block uploads commit fine. (Cause unconfirmed; possibly the commit is tied to the
   block-count handshake.) This app warns when a file it sent doesn't show up afterwards.
 - The listing JSON per file carries only `name`, `size`, `date` — no hidden id/handle field.
+- **What is stored, exactly** (round trip on a `1501ultra`, 2026-10-25: the same design sent once as
+  `.DST`, once as `.DSB`, both read back with §8): **every design is stored in the machine's own `.DSB`
+  form** — a `.DST` is converted (Tajima records → Barudan control / Y / X records). Even a `.DSB` comes
+  back different: the header is rewritten (label `LA:/local/b`, ST / CO recounted, the +Y / −Y fields
+  swapped), colour-change / stop records re-encoded, and the end record replaced by trailing jumps. **The
+  stitches survive exactly** — 4,167 stitches, 4 colours, 150.3 × 111.5 mm, every position identical,
+  for both files. So a check after sending must compare the design (stitch positions and colour blocks),
+  never the bytes (`machine_files/stitches.py`).
 
 ---
 

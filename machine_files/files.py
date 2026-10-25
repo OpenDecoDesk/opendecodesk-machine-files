@@ -58,6 +58,20 @@ def machine_rows(files):
     return sorted(rows, key=lambda r: (r["slot"], r["name"].lower()))
 
 
+def newest_stored_for(sent_name, machine_files):
+    """The machine's name for a file just sent: same base name, highest sequence number (the machine
+    numbers uploads in order). None if it isn't there."""
+    key = base_key(sent_name)
+    best, best_slot = None, -1
+    for i, f in enumerate(machine_files):
+        stored = f.get("name", "")
+        if base_key(stored) == key:
+            slot = machine_slot_and_name(stored, i)[0]
+            if slot > best_slot:
+                best, best_slot = stored, slot
+    return best
+
+
 def split_by_presence(candidates, present, key=base_key):
     """(to_copy, skipped): `candidates` whose key isn't among `present`'s keys, and those that
     are. Two candidates with the same key are copied once."""
