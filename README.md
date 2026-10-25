@@ -26,6 +26,10 @@ install besides the app itself.
   own format (its `.DSB` form, header rewritten), so the file itself always changes but the stitches,
   colour changes and size must not. Copied off a machine, it's read a second time and must match the
   saved file byte for byte.
+- **Save as .DST (from machine)** (off by default): files copied off a machine are saved as Tajima
+  `.DST` instead of the machine's `.DSB` — the same stitches, with every needle change or stop as a
+  colour change (how a `.DST` tells a machine to pause). Long moves are split into jumps; trims, which a
+  `.DST` can't hold, are dropped. With Verify on, each `.DST` is checked against the machine's copy.
 - It remembers the last folder and machine. The machine is remembered by its network card's MAC
   address, so it's still picked when its IP address changes.
 

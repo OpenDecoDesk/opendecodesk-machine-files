@@ -19,7 +19,7 @@ def settings_path():
 
 
 def defaults():
-    return {"lastFolder": "", "lastMachine": None, "verifyAfterCopy": True}
+    return {"lastFolder": "", "lastMachine": None, "verifyAfterCopy": True, "saveAsDst": False}
 
 
 def load(path=None):
@@ -35,8 +35,9 @@ def load(path=None):
         return out
     if isinstance(saved.get("lastFolder"), str):
         out["lastFolder"] = saved["lastFolder"]
-    if isinstance(saved.get("verifyAfterCopy"), bool):
-        out["verifyAfterCopy"] = saved["verifyAfterCopy"]
+    for key in ("verifyAfterCopy", "saveAsDst"):
+        if isinstance(saved.get(key), bool):
+            out[key] = saved[key]
     m = saved.get("lastMachine")
     if isinstance(m, dict) and isinstance(m.get("ip"), str):
         out["lastMachine"] = {k: str(m.get(k) or "") for k in ("mac", "ip", "model")}

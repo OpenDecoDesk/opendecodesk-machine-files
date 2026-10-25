@@ -128,7 +128,7 @@ class SettingsTests(unittest.TestCase):
             path = os.path.join(d, "nested", "settings.json")
             data = {"lastFolder": "/designs",
                     "lastMachine": {"mac": "AA:BB:CC:DD:EE:FF", "ip": "192.168.1.40", "model": "1501ultra"},
-                    "verifyAfterCopy": False}
+                    "verifyAfterCopy": False, "saveAsDst": True}
             self.assertTrue(st.save(data, path))
             self.assertEqual(st.load(path), data)
 

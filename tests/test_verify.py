@@ -46,6 +46,55 @@ class StitchCompareTests(unittest.TestCase):
             stitches.parse(make_dsb(SAMPLE), "design.pes")
 
 
+def _dst_pauses(dst):
+    """Stitch numbers where a .DST colour change (a pause) falls."""
+    out, n = [], 0
+    for i in range(512, len(dst) - 2, 3):
+        b2 = dst[i + 2]
+        if b2 & 0xF3 == 0xF3:
+            break
+        if b2 & 0xC3 == 0xC3:
+            out.append(n)
+        elif b2 & 0x83 != 0x83:
+            n += 1
+    return out
+
+
+class DsbToDstTests(unittest.TestCase):
+    def test_the_machines_copy_becomes_the_original_design(self):
+        dst = stitches.dsb_to_dst(make_dsb(SAMPLE, machine_style=True), label="LOGO")
+        self.assertTrue(stitches.compare(make_dst(SAMPLE), "orig.dst", dst, "made.dst")["match"])
+        self.assertTrue(stitches.compare(make_dsb(SAMPLE, machine_style=True), "m.dsb", dst, "made.dst")["match"])
+        self.assertEqual(_dst_pauses(dst), [35, 60], "the two colour changes, after stitches 35 and 60")
+        self.assertTrue(dst.startswith(b"LA:LOGO"))
+        self.assertIn(b"CO:  2", dst[:512])
+        self.assertTrue(dst.endswith(bytes([0, 0, 0xF3])), "ends with the .DST end record")
+
+    def test_a_stop_becomes_a_pause_in_either_spelling(self):
+        for stop in (0x88, 0xE8):  # the machines write 0x88; other software 0xE8
+            dsb = bytearray(make_dsb([("s", 5, 5)] * 10 + [("s", 1, 1)] * 10))
+            at = 512 + 3 * 10
+            dsb[at:at] = bytes([stop, 0, 0])
+            dst = stitches.dsb_to_dst(bytes(dsb))
+            self.assertEqual(_dst_pauses(dst), [10], hex(stop))
+            self.assertTrue(stitches.compare(bytes(dsb), "m.dsb", dst, "d.dst")["match"])
+            lost = stitches.dsb_to_dst(make_dsb([("s", 5, 5)] * 10 + [("s", 1, 1)] * 10))
+            self.assertFalse(stitches.compare(bytes(dsb), "m.dsb", lost, "d.dst")["match"],
+                             "a .DST that lost the stop doesn't verify")
+
+    def test_long_moves_are_split_into_jumps(self):
+        dsb = make_dsb([("s", 10, 10), ("j", 200, -180), ("s", 3, 3), ("s", 3, 3)])
+        dst = stitches.dsb_to_dst(dsb)
+        self.assertTrue(stitches.compare(dsb, "m.dsb", dst, "d.dst")["match"])
+        self.assertEqual(stitches.parse_dst(dst)["stitches"][1][:2], (213, -167))
+
+    def test_nothing_to_convert(self):
+        with self.assertRaises(ValueError):
+            stitches.dsb_to_dst(b"LA:/local/b" + bytes(10))
+        with self.assertRaises(ValueError):
+            stitches.dsb_to_dst(make_dsb([("j", 5, 5)]))
+
+
 class NewestStoredTests(unittest.TestCase):
     def test_highest_sequence_number_of_the_same_base_name(self):
         listing = [{"name": "LOGO.004"}, {"name": "CAP.010"}, {"name": "LOGO.021"}, {"name": "LOGO SMALL.030"}]

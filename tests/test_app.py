@@ -271,6 +271,31 @@ class AppTests(unittest.TestCase):
         from machine_files import settings as st
         self.assertFalse(st.load(self.settings_file)["verifyAfterCopy"])
 
+    def test_save_as_dst_from_the_machine(self):
+        from machine_files import settings as st
+        from machine_files import stitches
+        from tests.designs import SAMPLE, make_dsb, make_dst
+        fake = FakeMachines([MACHINE_A])
+        fake.files[MACHINE_A["ip"]] = [{"name": "CREST.007"}, {"name": "JUNK.008"}]
+        fake.stored["CREST.007"] = make_dsb(SAMPLE, machine_style=True)  # JUNK isn't a design
+        app = self.make(fake, watch_ms=0)
+        self.assertFalse(app.dst_var.get(), "off by default")
+        app.dst_chk.invoke()
+        self.assertTrue(st.load(self.settings_file)["saveAsDst"], "remembered")
+        app.folder_var.set(self.folder)
+        app.load_folder()
+        with mock.patch.object(self.app_mod.messagebox, "showwarning") as warn:
+            app.copy_all_from_machine()
+            self.settle(app)
+        saved = sorted(os.listdir(self.folder))
+        self.assertIn("CREST.DST", saved)
+        self.assertIn("JUNK.DSB", saved, "a file that can't be converted is kept as it came")
+        with open(os.path.join(self.folder, "CREST.DST"), "rb") as fh:
+            dst = fh.read()
+        self.assertTrue(stitches.compare(make_dst(SAMPLE), "orig.dst", dst, "saved.dst")["match"])
+        self.assertIn("JUNK.008", warn.call_args_list[0][0][1])
+        self.assertIn("as .DST", app.status_var.get())
+
     def test_verify_after_copy_from_machine_reads_twice(self):
         fake = FakeMachines([MACHINE_A])
         fake.files[MACHINE_A["ip"]] = [{"name": "NEW DESIGN.003"}]

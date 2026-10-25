@@ -87,7 +87,7 @@ class App:
         mid = ttk.Frame(outer, padding=(10, 0))
         mid.grid(row=1, column=1, sticky="ns")
         mid.rowconfigure(0, weight=1)
-        mid.rowconfigure(6, weight=1)
+        mid.rowconfigure(7, weight=1)
         self.btn_all_from = ttk.Button(mid, text="◀◀  Copy all", command=self.copy_all_from_machine)
         self.btn_sel_from = ttk.Button(mid, text="◀  Copy selected", command=self.copy_selected_from_machine)
         self.btn_sel_to = ttk.Button(mid, text="Copy selected  ▶", command=self.copy_selected_to_machine)
@@ -100,6 +100,12 @@ class App:
         self.verify_chk = ttk.Checkbutton(mid, text="Verify after copy", variable=self.verify_var,
                                           command=self._verify_changed)
         self.verify_chk.grid(row=5, column=0, sticky="w", pady=(10, 0))
+        # Files come off a machine in its own .DSB form; this saves them as .DST instead (same stitches,
+        # each needle change or stop a colour change).
+        self.dst_var = tk.BooleanVar(value=bool(self.settings.get("saveAsDst", False)))
+        self.dst_chk = ttk.Checkbutton(mid, text="Save as .DST (from machine)", variable=self.dst_var,
+                                       command=self._dst_changed)
+        self.dst_chk.grid(row=6, column=0, sticky="w", pady=(2, 0))
 
         # Right: machine picker + rescan, then the machine's files (slot, name).
         top_right = ttk.Frame(outer)
@@ -414,6 +420,11 @@ class App:
             btn.state(["!disabled"] if on else ["disabled"])
         self.rescan_btn.state(["!disabled"] if idle else ["disabled"])
 
+    def _dst_changed(self):
+        self.settings["saveAsDst"] = bool(self.dst_var.get())
+        self._save_settings()
+        log.info("save as .DST: %s", "on" if self.dst_var.get() else "off")
+
     def _verify_changed(self):
         self.settings["verifyAfterCopy"] = bool(self.verify_var.get())
         self._save_settings()
@@ -529,44 +540,60 @@ class App:
             return
         ip = self.machine["ip"]
         verify = bool(self.verify_var.get())
-        log.info("copy from machine %s: %d file(s), %d already in the folder", ip, len(to_copy), len(skipped))
+        as_dst = bool(self.dst_var.get())
+        log.info("copy from machine %s: %d file(s), %d already in the folder%s", ip, len(to_copy), len(skipped),
+                 ", saving as .DST" if as_dst else "")
 
         def work(progress):
-            saved, taken, bad = [], [], []
+            saved, taken, bad, unconverted = [], [], [], []
             for i, stored in enumerate(to_copy, 1):
                 progress(f"Copying {stored} from the machine ({i} of {len(to_copy)})…")
                 got = self.proto.download_file(ip, stored)
                 # The name comes from the machine — free_local_path makes it safe and keeps it in `folder`.
                 stem = fl.machine_slot_and_name(stored, 0)[1] or stored
-                path = fl.free_local_path(folder, stem, got.get("ext") or "DSB")
+                data, ext = got["bytes"], got.get("ext") or "DSB"
+                if as_dst:
+                    try:
+                        data, ext = stitches.dsb_to_dst(got["bytes"], label=stem), "DST"
+                    except ValueError as e:
+                        unconverted.append(f"{stored}: {e} — kept as .DSB")
+                        log.warning("convert %s to .DST failed: %s", stored, e)
+                path = fl.free_local_path(folder, stem, ext)
                 if path is None:
                     taken.append(stored)  # a file by that name is already there; never overwrite
                     continue
                 with open(path, "xb") as fh:
-                    fh.write(got["bytes"])
+                    fh.write(data)
                 saved.append(os.path.basename(path))
                 if verify:
-                    # Read it off the machine a second time, and the saved file back from disk: both
-                    # must be the same bytes (nothing is converted on the way to this computer).
+                    # Read it off the machine a second time (must be the same bytes), and the saved file back
+                    # from disk: the same bytes as received, or — saved as .DST — the same stitches and pauses.
                     progress(f"Verifying {stored} ({i} of {len(to_copy)})…")
                     again = self.proto.download_file(ip, stored)["bytes"]
                     with open(path, "rb") as fh:
                         on_disk = fh.read()
-                    problem = ("a second read from the machine gave different bytes" if again != got["bytes"]
-                               else "the saved file doesn't match what was received" if on_disk != got["bytes"]
-                               else None)
+                    if again != got["bytes"]:
+                        problem = "a second read from the machine gave different bytes"
+                    elif ext == "DST":
+                        cmp = stitches.compare(got["bytes"], "machine.dsb", on_disk, "saved.dst")
+                        problem = None if cmp["match"] else f"the .DST doesn't match the machine's copy: {cmp['summary']}"
+                    else:
+                        problem = None if on_disk == got["bytes"] else "the saved file doesn't match what was received"
                     if problem:
                         bad.append(f"{os.path.basename(path)}: {problem}")
-                    log.info("verify %s: %s", stored, problem or "OK — same bytes on a second read and on disk")
-            return saved, taken, (bad if verify else None)
+                    log.info("verify %s: %s", stored, problem or "OK")
+            return saved, taken, (bad if verify else None), unconverted
 
         def done(result, error):
             self.load_folder()
             if error:
                 self._error("Copy from machine", error)
                 return
-            saved, taken, bad = result
-            msg = f"Copied {len(saved)} file(s) into the folder."
+            saved, taken, bad, unconverted = result
+            msg = f"Copied {len(saved)} file(s) into the folder" + (" as .DST." if as_dst else ".")
+            if unconverted:
+                messagebox.showwarning(APP_TITLE, "Couldn't convert to .DST:\n\n" + "\n".join(unconverted),
+                                       parent=self.root)
             if skipped or taken:
                 msg += f" {len(skipped) + len(taken)} already there, skipped."
             if bad:
@@ -574,7 +601,8 @@ class App:
                                        parent=self.root)
                 msg += f" Verify: {len(bad)} didn't match."
             elif bad is not None and saved:
-                msg += " Verified: each matches the machine's copy exactly."
+                msg += (" Verified: each has the machine copy's stitches and pauses." if as_dst
+                        else " Verified: each matches the machine's copy exactly.")
             self.status(msg)
 
         self._run(work, done)

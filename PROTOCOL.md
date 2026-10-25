@@ -179,6 +179,13 @@ ASCII name**, not by an index.
   stitches survive exactly** — 4,167 stitches, 4 colours, 150.3 × 111.5 mm, every position identical,
   for both files. So a check after sending must compare the design (stitch positions and colour blocks),
   never the bytes (`machine_files/stitches.py`).
+- **Pauses.** The machines write a same-needle **stop** as control `0x88` (other software uses `0xE8`;
+  only the low 5 bits mean anything, 8 = stop) and a needle change as `0x8x`/`0xEx` with low bits 9–23.
+  A `.DST` has only a colour change for both, so a converter must turn every needle change *and* stop
+  after the first stitch into a `.DST` colour change, or the design loses its pauses. (pyembroidery
+  2026 reads `0x88` as the end of the design and drops everything after it.) Converting the machine's
+  copy of a design back to `.DST` gives the original `.DST`'s stitches and pause points exactly
+  (checked on a real design: 4,167 stitches, pauses after stitches 856, 1967 and 3345).
 
 ---
 
