@@ -242,7 +242,8 @@ host → machine:  body = 01 00 CF 22 <page+1 16 LE>                (ack: "ready
 - The data is the machine's **stored form**: a 512-byte DST-style header (`LA:`, `ST:`, `CO:`,
   `+X:` …) followed by Barudan (`.DSB`) stitch records — whatever format was uploaded. Its size is
   exactly `512 + 3 × (ST − 1)` (4079 stitches → 12,746 bytes). It is **not** the listed `size`
-  (the listing said 16,698 for that file). Save it as `.DSB`.
+  (the listing said 16,698 for that file). Save it as `.DSB`, or convert it to `.DST`
+  (`machine_files/stitches.py`: every needle change and stop after the first stitch becomes a colour change — §5).
 - An unknown name is expected to get a `CF E0`/`CF E1` refusal (not seen in a capture);
   `download_file()` treats any non-`CF 23` reply as a refusal and checks every block's page
   number, block count and LRC.

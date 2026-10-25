@@ -4,14 +4,7 @@ A small desktop app for copying embroidery designs between a folder on your comp
 **SmartStitch** embroidery machine on your network — no vendor software, no website, nothing to
 install besides the app itself.
 
-```
-┌ Folder ───────────────────┐               ┌ Machine ──────────────────────┐
-│ [/path/designs ] [▤][↻]│  ◀◀ Copy all   │ [1501ultra — 192.168.1.40 ▾][↻]│
-│ LOGO.DST                  │  ◀ Copy sel.   │ Slot  Name                      │
-│ NAME_CAP.DSB              │  Copy sel. ▶   │   12  LOGO                      │
-│                           │  Copy all ▶▶   │   13  CREST                     │
-└───────────────────────────┘               └───────────────────────────────┘
-```
+![The Machine Files window: a folder of designs on the left, a machine's files on the right, the copy buttons between](docs/screenshot.png)
 
 - **Left:** a folder (type a path and press Enter, or click the folder button). Only `.dst` and `.dsb` files are
   listed. The list updates by itself when files are added, changed or removed (checked every 2 seconds);
@@ -33,8 +26,8 @@ install besides the app itself.
   `.DST` instead of the machine's `.DSB` — the same stitches, with every needle change or stop as a
   colour change (how a `.DST` tells a machine to pause). Long moves are split into jumps; trims, which a
   `.DST` can't hold, are dropped. With Verify on, each `.DST` is checked against the machine's copy.
-- It remembers the last folder and machine. The machine is remembered by its network card's MAC
-  address, so it's still picked when its IP address changes.
+- It remembers the last folder, the machine and the two tick boxes. The machine is remembered by its
+  network card's MAC address, so it's still picked when its IP address changes.
 
 ### What works today
 | | |
@@ -42,7 +35,8 @@ install besides the app itself.
 | Finding machines (UDP scan) | ✅ |
 | Listing a machine's files | ✅ |
 | Copying files **to** a machine | ✅ |
-| Copying files **from** a machine | ✅ saved as `.DSB` — the machine keeps every design in its own form (a DST-style header with Barudan stitch records), whatever was sent |
+| Copying files **from** a machine | ✅ saved as `.DSB` — the machine keeps every design in its own form (a DST-style header with Barudan stitch records), whatever was sent — or converted to `.DST` with Save as .DST |
+| Checking a copy (Verify after copy) | ✅ read back and compared stitch by stitch (to a machine) or byte for byte (from one) |
 | Deleting files on a machine | ❌ disabled in the machines' firmware ([PROTOCOL.md §6](PROTOCOL.md)); clear files at the touchscreen |
 
 Tested against the `1201plus` and `1501ultra` models.
@@ -71,7 +65,8 @@ Python 3.9 or newer with Tk (standard library only — nothing to `pip install`)
 ```bash
 python3 -m machine_files
 ```
-On macOS, use the python.org installer or Homebrew's Python with Tk added (`brew install python-tk`).
+On macOS, use the python.org installer or Homebrew's Python with Tk added (`brew install python-tk`; its
+Tk 9 works).
 Not Apple's `/usr/bin/python3`: its Tk 8.5 is deprecated and draws the window wrongly on current macOS.
 If Python's Tk window never appears and the command just waits (often after a run was force-quit), macOS
 is showing a hidden "reopen windows?" question; turn that off for Python with
