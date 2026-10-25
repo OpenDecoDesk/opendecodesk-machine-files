@@ -39,7 +39,12 @@ install besides the app itself.
 | Checking a copy (Verify after copy) | ✅ read back and compared stitch by stitch (to a machine) or byte for byte (from one) |
 | Deleting files on a machine | ❌ disabled in the machines' firmware ([PROTOCOL.md §6](PROTOCOL.md)); clear files at the touchscreen |
 
-Tested against the `1201plus` and `1501ultra` models.
+### Compatibility
+Tested on the SmartStitch **1501 Ultra** (`1501ultra`) and **1201 Plus** (`1201plus`). These machines are
+built on **Raynen** embroidery controllers, and the app talks to the controller, not to anything
+SmartStitch-specific — so it should also work with other machines that use a Raynen controller and speak
+the same network protocol ([PROTOCOL.md](PROTOCOL.md)). That's untested so far: if you try one, a note in
+the issues saying whether it worked (with the file from **Save diagnostics…** if it didn't) helps.
 
 ### If no machines are found
 When the network scan gets no reply, the app tries TCP port 6000 (the machines' file port) on every
@@ -95,7 +100,7 @@ Discovery is a UDP broadcast to port 23; everything else is framed TCP on port 6
 (`FA 01 <len> <body> <xor>`). [PROTOCOL.md](PROTOCOL.md) has the full, reverse-engineered
 reference; `machine_files/protocol.py` is the implementation.
 
-SmartStitch is the machine vendor's brand; this project isn't affiliated with or endorsed by them.
+SmartStitch and Raynen are their owners' brands; this project isn't affiliated with or endorsed by either.
 
 ## Licence
 [GNU AGPL-3.0](LICENSE).
