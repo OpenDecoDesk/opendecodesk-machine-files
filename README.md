@@ -41,8 +41,8 @@ install besides the app itself.
 
 ### Compatibility
 Tested on two SmartStitch machines, both with **Raynen** controllers:
-- SmartStitch **1501 Ultra** (SD5314) — reports itself as `1501ultra`
-- SmartStitch **1201 Plus** (JD5315) — reports itself as `1201plus`
+- SmartStitch **1501 Ultra** (SD5314)
+- SmartStitch **1201 Plus** (JD5315)
 
 The app talks to the Raynen controller, not to anything SmartStitch-specific, so it should also work with
 other machines that have a Raynen controller speaking the same network protocol

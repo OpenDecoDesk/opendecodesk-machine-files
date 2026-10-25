@@ -115,7 +115,8 @@ def _cstr(buf, start):
 
 
 def parse_discovery_reply(data):
-    """MAC at bytes 9:15, firmware NUL-terminated from byte 19, model NUL-terminated from byte 51."""
+    """MAC at bytes 9:15, firmware NUL-terminated from byte 19, and from byte 51 the name entered on the
+    machine (kept under "model" — not a model number)."""
     mac = ":".join(f"{b:02X}" for b in data[9:15]) if len(data) >= 15 else ""
     return {"mac": mac, "firmware": _cstr(data, 19), "model": _cstr(data, 51) or "SmartStitch"}
 
