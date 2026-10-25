@@ -73,6 +73,9 @@ python3 -m machine_files
 ```
 On macOS, use the python.org installer or Homebrew's Python with Tk added (`brew install python-tk`).
 Not Apple's `/usr/bin/python3`: its Tk 8.5 is deprecated and draws the window wrongly on current macOS.
+If Python's Tk window never appears and the command just waits (often after a run was force-quit), macOS
+is showing a hidden "reopen windows?" question; turn that off for Python with
+`defaults write org.python.python ApplePersistenceIgnoreState -bool YES`.
 
 ## Tests
 ```bash

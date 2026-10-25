@@ -7,12 +7,14 @@ import time
 import unittest
 from unittest import mock
 
+# ONE Tk window for all the tests, cleared between them: Tk 9.1 on macOS hangs or crashes when a program
+# opens a new Tk window after closing one, and opening only one is better practice anyway.
 try:
     import tkinter as tk
-    _root = tk.Tk()
-    _root.destroy()
+    _ROOT = tk.Tk()
     HAVE_TK = True
 except Exception:  # no Tk in this Python, or no display
+    _ROOT = None
     HAVE_TK = False
 
 from machine_files import protocol
@@ -72,21 +74,38 @@ class AppTests(unittest.TestCase):
             with open(os.path.join(self.folder, n), "wb") as fh:
                 fh.write(b"x" * 1500)
         self.settings_file = os.path.join(self.tmp.name, "settings.json")
-        self.root = tk.Tk()
-        self.root.withdraw()
+        self.root = _ROOT
+        self.apps = []
+        self.hide_window()
 
     def tearDown(self):
         self.close_window()
         self.tmp.cleanup()
 
+    def hide_window(self):
+        """Keep test windows out of sight. Tk 9.1 on macOS crashes (inside Tk, showRootWindow) when a
+        withdrawn window is updated, so there the window is left up and moved off-screen instead."""
+        if tk.TkVersion >= 9 and self.root.tk.call("tk", "windowingsystem") == "aqua":
+            self.root.geometry("+-3000+-3000")
+        else:
+            self.root.withdraw()
+
     def close_window(self):
-        """Close the window, then free what's left of it here on the Tk thread: left for later, the garbage
-        collector can free Tk objects on a worker thread, which aborts the process (Tcl_AsyncDelete)."""
-        self.root.destroy()
+        """Close the app (its timers and work), clear the shared window, then free what's left here on the Tk
+        thread: left for later, the garbage collector can free Tk objects on a worker thread, which aborts
+        the process (Tcl_AsyncDelete)."""
+        for app in self.apps:
+            app.close()
+        self.apps = []
+        for widget in self.root.winfo_children():
+            widget.destroy()
+        self.root.unbind("<Destroy>")
+        self.root.update_idletasks()
         gc.collect()
 
     def make(self, fake, **kw):
         app = self.app_mod.App(self.root, settings_file=self.settings_file, proto=fake, **kw)
+        self.apps.append(app)
         self.settle(app)
         return app
 
@@ -517,8 +536,7 @@ class AppTests(unittest.TestCase):
         self.close_window()
 
         # Next run: machine B has a new address; it's still the one picked.
-        self.root = tk.Tk()
-        self.root.withdraw()
+        self.hide_window()
         moved_b = {**MACHINE_B, "ip": "10.0.0.77"}
         app2 = self.make(FakeMachines([MACHINE_A, moved_b]))
         self.assertEqual(app2.folder_var.get(), self.folder)
@@ -526,8 +544,7 @@ class AppTests(unittest.TestCase):
 
         # A run where no machine answers still offers the last one at its last address.
         self.close_window()
-        self.root = tk.Tk()
-        self.root.withdraw()
+        self.hide_window()
         app3 = self.make(FakeMachines([]))
         self.assertEqual(list(app3.machine_combo["values"]), ["1501ultra — 10.0.0.77 (last seen)"])
         self.assertEqual(app3.machine["mac"], MACHINE_B["mac"])

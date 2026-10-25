@@ -200,6 +200,20 @@ class App:
             pass
         self._poll_id = self.root.after(60, self._poll)
 
+    def close(self):
+        """Stop this window's timers and wait for its background work, so the Tk window can be reused (the
+        tests run every case in one window)."""
+        for attr in ("_poll_id", "_watch_id"):
+            if getattr(self, attr, None):
+                try:
+                    self.root.after_cancel(getattr(self, attr))
+                except tk.TclError:
+                    pass
+                setattr(self, attr, None)
+        worker = getattr(self, "_worker", None)
+        if worker is not None:
+            worker.join(5)
+
     def _on_destroy(self, event):
         if event.widget is not self.root:
             return
