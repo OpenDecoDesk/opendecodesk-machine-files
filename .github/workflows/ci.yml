@@ -70,6 +70,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat > notes.md <<'NOTES'
+          **New in 0.6.1:** the app's icon — the OpenDecoDesk hoop with the D, on a folder — also in the window's title bar and the taskbar / dock.
+
           Copy embroidery designs between a folder on your computer and a SmartStitch embroidery machine on your network.
 
           **Downloads**
