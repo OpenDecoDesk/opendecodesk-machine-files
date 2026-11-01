@@ -3,14 +3,18 @@ name: CI
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
   workflow_dispatch:
     inputs:
       release:
-        description: "Publish a release: v<version in machine_files/__init__.py>, from main"
+        description: "Publish a release (from main): the version is today's date (UTC) and the day's build number"
         type: boolean
         default: false
+
+# Releases run one at a time, so two can't take the same build number; other runs aren't held up.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && inputs.release && 'release' || github.run_id }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -29,10 +33,33 @@ jobs:
       - name: Tests
         run: python -m unittest discover -s tests -t . -v
 
+  version:
+    # The version the builds carry. Publishing a release: today's UTC date and the day's build number,
+    # YYYY.MM.DD.NN, one past today's highest tag (01 if none). Otherwise "dev".
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # the tags, for the day's build number
+      - id: version
+        env:
+          RELEASE: ${{ inputs.release && github.ref == 'refs/heads/main' }}
+        run: |
+          if [ "$RELEASE" = "true" ]; then
+            v=$(git tag --list 'v*' | python3 scripts/release_version.py next)
+          else
+            v=dev
+          fi
+          echo "Version: $v"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
   build:
-    # Builds the downloadable apps on a version tag or when run by hand (Actions → CI → Run workflow).
-    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
-    needs: test
+    # Builds the downloadable apps when run by hand (Actions → CI → Run workflow).
+    if: github.event_name == 'workflow_dispatch'
+    needs: [test, version]
     strategy:
       matrix:
         os: [macos-latest, windows-latest]
@@ -43,6 +70,11 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install pyinstaller==6.11.1
+      - name: Stamp the version
+        shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: python scripts/release_version.py stamp "$VERSION"
       - run: pyinstaller --noconfirm opendecodesk-machine-files.spec
       - name: Zip the macOS app
         if: runner.os == 'macOS'
@@ -55,25 +87,16 @@ jobs:
             dist/*.exe
 
   release:
-    # Publishes the two builds as a GitHub release, on a version tag or when run by hand on main with
-    # "Publish a release" ticked (which creates the tag v<version>). The only job that may write. A
-    # version is released once: a second run for the same one fails, so bump the version first.
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release && github.ref == 'refs/heads/main')
-    needs: build
+    # Publishes the two builds as a GitHub release when run by hand on main with "Publish a release"
+    # ticked: tagged v<version>, titled with the version. The only job that may write.
+    if: github.event_name == 'workflow_dispatch' && inputs.release && github.ref == 'refs/heads/main'
+    needs: [version, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write   # to create the release (and its tag)
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v5
-      - name: The version
-        run: |
-          v=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' machine_files/__init__.py)
-          if [ -z "$v" ]; then echo "::error::No __version__ in machine_files/__init__.py"; exit 1; fi
-          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "v$v" ]; then
-            echo "::error::The tag $GITHUB_REF_NAME doesn't match the version in machine_files/__init__.py ($v). Tag v$v instead, or change the version."
-            exit 1
-          fi
-          echo "TAG=v$v" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -87,7 +110,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat > notes.md <<'NOTES'
-          **New in 0.6.1:** the app's icon — the OpenDecoDesk hoop with the D, on a folder — also in the window's title bar and the taskbar / dock.
+          **New:** the version is now the release date and the day's build number (like 2026.11.01.01). It shows in the window's title bar and at the top of the window, beside the OpenDecoDesk name.
 
           Copy embroidery designs between a folder on your computer and a SmartStitch embroidery machine on your network.
 
@@ -99,7 +122,7 @@ jobs:
 
           Close the machine vendor's own app while using this one. Deleting files on a machine isn't possible (disabled in the firmware).
           NOTES
-          gh release create "$TAG" --target "$GITHUB_SHA" \
+          gh release create "v$VERSION" --target "$GITHUB_SHA" \
             dist/OpenDecoDesk-Machine-Files-Windows.exe \
             dist/OpenDecoDesk-Machine-Files-macOS-AppleSilicon.zip \
-            --repo "$GITHUB_REPOSITORY" --title "OpenDecoDesk Machine Files $TAG" --notes-file notes.md
+            --repo "$GITHUB_REPOSITORY" --title "OpenDecoDesk Machine Files $VERSION" --notes-file notes.md

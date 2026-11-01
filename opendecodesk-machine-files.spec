@@ -1,12 +1,19 @@
 # PyInstaller build: `pyinstaller opendecodesk-machine-files.spec`
 # macOS -> dist/OpenDecoDesk Machine Files.app (a folder bundle; zip it to share)
 # Windows / Linux -> dist/OpenDecoDesk Machine Files(.exe), one portable file
+import os
 import sys
 
-NAME = "OpenDecoDesk Machine Files"
+sys.path.insert(0, os.path.join(SPECPATH, "scripts"))
+import release_version
 
-# icons/icon.png is the window's own icon (app.py); the .icns / .ico are the app's.
-a = Analysis(["run.py"], pathex=["."], datas=[("icons/icon.png", "icons")])
+NAME = "OpenDecoDesk Machine Files"
+# "dev", or the release's version that CI stamped into machine_files/__init__.py before this build.
+SHORT_VERSION, BUNDLE_VERSION = release_version.mac_versions(release_version.read())
+
+# icons/icon.png is the window's own icon and mark-*.png the header's (app.py); the .icns / .ico are the app's.
+a = Analysis(["run.py"], pathex=["."], datas=[("icons/icon.png", "icons"), ("icons/mark-24.png", "icons"),
+                                              ("icons/mark-48.png", "icons")])
 pyz = PYZ(a.pure)
 
 if sys.platform == "darwin":
@@ -21,7 +28,8 @@ if sys.platform == "darwin":
             # macOS asks before an app talks to devices on the local network; this is the reason shown.
             "NSLocalNetworkUsageDescription":
                 "Finds the embroidery machines on your network and copies design files to them.",
-            "CFBundleShortVersionString": "0.6.1",
+            "CFBundleShortVersionString": SHORT_VERSION,
+            "CFBundleVersion": BUNDLE_VERSION,
         },
     )
 else:

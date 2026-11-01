@@ -8,6 +8,7 @@ import sys
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+from tkinter import font as tkfont
 
 from . import __version__
 from . import diagnostics
@@ -19,6 +20,7 @@ from . import stitches
 log = logging.getLogger("machine_files.app")
 
 APP_TITLE = "OpenDecoDesk Machine Files"
+NAVY, GREY = "#1F2A44", "#6B7280"  # the OpenDecoDesk header's text
 WATCH_MS = 2000  # how often the folder is checked for new, changed or removed files
 
 
@@ -39,7 +41,7 @@ class App:
         self._shown_folder = ""     # the folder the list shows (not what's half-typed in the box)
         self._watch_ms = watch_ms
 
-        root.title(APP_TITLE)
+        root.title(f"{APP_TITLE} {__version__}")
         root.minsize(760, 420)
         self._build()
         self._poll_id = root.after(60, self._poll)
@@ -58,10 +60,12 @@ class App:
 
     # ---- layout --------------------------------------------------------------------------
     def _build(self):
+        self._build_header()
+        ttk.Separator(self.root, orient="horizontal").grid(row=1, column=0, sticky="ew")
         outer = ttk.Frame(self.root, padding=10)
-        outer.grid(row=0, column=0, sticky="nsew")
+        outer.grid(row=2, column=0, sticky="nsew")
         self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(0, weight=1)
+        self.root.rowconfigure(2, weight=1)
         outer.columnconfigure(0, weight=1)
         outer.columnconfigure(2, weight=1)
         outer.rowconfigure(1, weight=1)
@@ -130,14 +134,28 @@ class App:
         self.status_var = tk.StringVar(value="")
         ttk.Label(outer, textvariable=self.status_var, anchor="w").grid(
             row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        foot = ttk.Frame(outer)
-        foot.grid(row=2, column=2, sticky="e", pady=(8, 0))
-        ttk.Label(foot, text=f"v{__version__}", foreground="#777").grid(row=0, column=0, padx=(0, 8))
-        self.diag_btn = ttk.Button(foot, text="Save diagnostics…", command=self.save_diagnostics)
-        self.diag_btn.grid(row=0, column=1)
+        self.diag_btn = ttk.Button(outer, text="Save diagnostics…", command=self.save_diagnostics)
+        self.diag_btn.grid(row=2, column=2, sticky="e", pady=(8, 0))
 
         for tree in (self.local_tree, self.machine_tree):
             tree.bind("<<TreeviewSelect>>", lambda e: self._update_buttons())
+
+    def _build_header(self):
+        """The row at the top, the same in every OpenDecoDesk app: the mark, the app's name, its version."""
+        head = ttk.Frame(self.root, padding=(10, 8))
+        head.grid(row=0, column=0, sticky="ew")
+        self._mark_img = _mark_icon(self.root)
+        if self._mark_img is not None:
+            ttk.Label(head, image=self._mark_img).grid(row=0, column=0, padx=(0, 8))
+        base = tkfont.nametofont("TkDefaultFont").actual()
+        size = base["size"] + (2 if base["size"] > 0 else -2)  # a negative size is in pixels
+        self._head_fonts = [tkfont.Font(self.root, family=base["family"], size=size, weight="bold"),
+                            tkfont.Font(self.root, family=base["family"], size=size),
+                            tkfont.Font(self.root, family=base["family"], size=base["size"])]
+        ttk.Label(head, text="OpenDecoDesk", font=self._head_fonts[0], foreground=NAVY).grid(row=0, column=1)
+        ttk.Label(head, text=" Machine Files", font=self._head_fonts[1], foreground=NAVY).grid(row=0, column=2)
+        self.version_label = ttk.Label(head, text=__version__, font=self._head_fonts[2], foreground=GREY)
+        self.version_label.grid(row=0, column=3, padx=(12, 0))
 
     def _tree(self, parent, columns, tree_column=None):
         """A list with headings. `tree_column` (title, width) puts the first column in the tree column,
@@ -708,14 +726,26 @@ def _folder_icon(root):
     return img
 
 
-def _window_icon(root):
-    """The program's icon (icons/icon.png) for the window's title bar and the taskbar / dock: inside the
-    PyInstaller bundle when frozen, else at the top of the source tree. None if it can't be read."""
+def _icon_file(root, name):
+    """An image from icons/: inside the PyInstaller bundle when frozen, else at the top of the source tree.
+    None if it can't be read."""
     base = getattr(sys, "_MEIPASS", None) or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
     try:
-        return tk.PhotoImage(master=root, file=os.path.join(base, "icons", "icon.png"))
+        return tk.PhotoImage(master=root, file=os.path.join(base, "icons", name))
     except tk.TclError:
         return None
+
+
+def _window_icon(root):
+    """The program's icon, for the window's title bar and the taskbar / dock."""
+    return _icon_file(root, "icon.png")
+
+
+def _mark_icon(root):
+    """The OpenDecoDesk mark for the header: 24 px, or 48 px on a high-density screen (Tk's scaling is
+    pixels per point, 1.33 on an ordinary screen)."""
+    hidpi = float(root.tk.call("tk", "scaling")) >= 2
+    return _icon_file(root, "mark-48.png" if hidpi else "mark-24.png")
 
 
 def main():

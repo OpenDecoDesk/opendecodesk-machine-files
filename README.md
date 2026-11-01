@@ -89,23 +89,29 @@ The protocol tests run against stub machines on loopback that speak the real fra
 where Tk or a display isn't available.
 
 ## Making a release
-Set the new version in `machine_files/__init__.py` and the spec file, and merge it to main. Then
-either run **Actions → CI → Run workflow** on main with **Publish a release** ticked, or push a tag
-like `v0.6.0` with the same version. CI runs the tests, builds both apps and publishes them as a
-release (tagged `v<version>`).
+Merge the changes to main, then run **Actions → CI → Run workflow** on main with **Publish a release**
+ticked. CI runs the tests, builds both apps and publishes them as a release. The version is the date
+(UTC) and the day's build number: the first release on 1 November 2026 is `2026.11.01.01`, a second one
+that day `2026.11.01.02`. Nobody sets it by hand: the source says `dev`, and CI works the version out
+from the existing tags and stamps it into the build (`scripts/release_version.py`). The release is
+tagged `v<version>`; the download file names stay the same. The version shows in the window's title
+bar and at the top of the window; a run from source or a build that isn't a release says `dev`.
 
 ## Build the apps yourself
 ```bash
 python3 -m pip install pyinstaller
 pyinstaller --noconfirm opendecodesk-machine-files.spec
 ```
+A build made this way says `dev` for its version; only a release from CI carries a date version.
 
 The app's icon (`icons/`: the OpenDecoDesk navy tile, cream hoop and orange D, here on a folder) is made
 from its two drawings, `icons/icon-large.svg` (64 px and up) and `icons/icon-small.svg` (48 px and
 under), with OpenDecoDesk's icon script: in a checkout of
 [OpenDecoDesk](https://github.com/OpenDecoDesk/opendecodesk), `cd desktop && npm install`, then
 `npx electron icons/make-icons.js --large=<this repo>/icons/icon-large.svg --small=<this repo>/icons/icon-small.svg --out=<this repo>/icons`.
-Commit the `icon.icns`, `icon.ico` and `icon.png` it writes.
+Commit the `icon.icns`, `icon.ico` and `icon.png` it writes. The OpenDecoDesk mark at the top of the
+window (`icons/mark-24.png`, and `icons/mark-48.png` for high-density screens) is the plain mark, without
+the folder: the OpenDecoDesk website's 32 px favicon drawn at 24 and 48 px.
 
 ## How it talks to the machines
 Discovery is a UDP broadcast to port 23; everything else is framed TCP on port 6000

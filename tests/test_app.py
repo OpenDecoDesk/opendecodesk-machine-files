@@ -320,13 +320,32 @@ class AppTests(unittest.TestCase):
             time.sleep(0.02)
         self.assertIn("AUTO.DST", app.local_files)
 
+    def test_title_and_header_show_the_version(self):
+        with mock.patch.object(self.app_mod, "__version__", "2026.11.01.01"):
+            app = self.make(FakeMachines([]), scan_on_start=False, watch_ms=0)
+        self.assertEqual(self.root.title(), "OpenDecoDesk Machine Files 2026.11.01.01")
+        self.assertEqual(app.version_label.cget("text"), "2026.11.01.01")
+        head = app.version_label.master
+        self.assertEqual(int(head.grid_info()["row"]), 0, "the header is the window's top row")
+        texts = [w.cget("text") for w in head.winfo_children() if w.winfo_class() == "TLabel"]
+        self.assertIn("OpenDecoDesk", texts)
+        self.assertIn(" Machine Files", texts)
+        self.assertIn(app._mark_img.width(), (24, 48), "the OpenDecoDesk mark is shown")
+        # The version shows once: not again at the bottom beside "Save diagnostics…".
+        others = [w for w in app.diag_btn.master.winfo_children() if w.winfo_class() == "TLabel"]
+        self.assertFalse(any("2026.11.01.01" in str(w.cget("text")) for w in others))
+
+    def test_a_dev_run_says_dev(self):
+        from machine_files import __version__
+        self.make(FakeMachines([]), scan_on_start=False, watch_ms=0)
+        self.assertEqual(__version__, "dev")
+        self.assertEqual(self.root.title(), "OpenDecoDesk Machine Files dev")
+
     def test_save_diagnostics_writes_version_state_and_log(self):
         from machine_files import __version__
         app = self.make(FakeMachines([MACHINE_A]), watch_ms=0)
         app.folder_var.set(self.folder)
         app.load_folder()
-        self.assertTrue(any(w.cget("text") == f"v{__version__}" for w in app.diag_btn.master.winfo_children()
-                            if w.winfo_class() == "TLabel"), "the version shows beside the button")
         out = os.path.join(self.tmp.name, "diag.txt")
         with mock.patch.object(self.app_mod.messagebox, "showinfo") as info:
             app.save_diagnostics(out)
