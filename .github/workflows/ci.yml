@@ -6,6 +6,11 @@ on:
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      release:
+        description: "Publish a release: v<version in machine_files/__init__.py>, from main"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -50,13 +55,25 @@ jobs:
             dist/*.exe
 
   release:
-    # On a version tag: publish the two builds as a GitHub release. The only job that may write.
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Publishes the two builds as a GitHub release, on a version tag or when run by hand on main with
+    # "Publish a release" ticked (which creates the tag v<version>). The only job that may write. A
+    # version is released once: a second run for the same one fails, so bump the version first.
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release && github.ref == 'refs/heads/main')
     needs: build
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write   # to create the release (and its tag)
     steps:
+      - uses: actions/checkout@v5
+      - name: The version
+        run: |
+          v=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' machine_files/__init__.py)
+          if [ -z "$v" ]; then echo "::error::No __version__ in machine_files/__init__.py"; exit 1; fi
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "v$v" ]; then
+            echo "::error::The tag $GITHUB_REF_NAME doesn't match the version in machine_files/__init__.py ($v). Tag v$v instead, or change the version."
+            exit 1
+          fi
+          echo "TAG=v$v" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -82,7 +99,7 @@ jobs:
 
           Close the machine vendor's own app while using this one. Deleting files on a machine isn't possible (disabled in the firmware).
           NOTES
-          gh release create "$GITHUB_REF_NAME" \
+          gh release create "$TAG" --target "$GITHUB_SHA" \
             dist/OpenDecoDesk-Machine-Files-Windows.exe \
             dist/OpenDecoDesk-Machine-Files-macOS-AppleSilicon.zip \
-            --repo "$GITHUB_REPOSITORY" --title "OpenDecoDesk Machine Files $GITHUB_REF_NAME" --notes-file notes.md
+            --repo "$GITHUB_REPOSITORY" --title "OpenDecoDesk Machine Files $TAG" --notes-file notes.md

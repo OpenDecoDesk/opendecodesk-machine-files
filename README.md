@@ -89,8 +89,10 @@ The protocol tests run against stub machines on loopback that speak the real fra
 where Tk or a display isn't available.
 
 ## Making a release
-Push a tag like `v0.6.0` (and set the same version in `machine_files/__init__.py` and the spec file). CI
-runs the tests, builds both apps and publishes them as a release.
+Set the new version in `machine_files/__init__.py` and the spec file, and merge it to main. Then
+either run **Actions → CI → Run workflow** on main with **Publish a release** ticked, or push a tag
+like `v0.6.0` with the same version. CI runs the tests, builds both apps and publishes them as a
+release (tagged `v<version>`).
 
 ## Build the apps yourself
 ```bash
