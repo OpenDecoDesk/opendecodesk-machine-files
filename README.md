@@ -98,6 +98,13 @@ python3 -m pip install pyinstaller
 pyinstaller --noconfirm opendecodesk-machine-files.spec
 ```
 
+The app's icon (`icons/`: the OpenDecoDesk navy tile, cream hoop and orange D, here on a folder) is made
+from its two drawings, `icons/icon-large.svg` (64 px and up) and `icons/icon-small.svg` (48 px and
+under), with OpenDecoDesk's icon script: in a checkout of
+[OpenDecoDesk](https://github.com/OpenDecoDesk/opendecodesk), `cd desktop && npm install`, then
+`npx electron icons/make-icons.js --large=<this repo>/icons/icon-large.svg --small=<this repo>/icons/icon-small.svg --out=<this repo>/icons`.
+Commit the `icon.icns`, `icon.ico` and `icon.png` it writes.
+
 ## How it talks to the machines
 Discovery is a UDP broadcast to port 23; everything else is framed TCP on port 6000
 (`FA 01 <len> <body> <xor>`). [PROTOCOL.md](PROTOCOL.md) has the full, reverse-engineered
