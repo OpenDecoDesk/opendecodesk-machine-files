@@ -4,6 +4,7 @@ import datetime
 import logging
 import os
 import queue
+import sys
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -707,8 +708,21 @@ def _folder_icon(root):
     return img
 
 
+def _window_icon(root):
+    """The program's icon (icons/icon.png) for the window's title bar and the taskbar / dock: inside the
+    PyInstaller bundle when frozen, else at the top of the source tree. None if it can't be read."""
+    base = getattr(sys, "_MEIPASS", None) or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+    try:
+        return tk.PhotoImage(master=root, file=os.path.join(base, "icons", "icon.png"))
+    except tk.TclError:
+        return None
+
+
 def main():
     diagnostics.setup()
     root = tk.Tk()
+    icon = _window_icon(root)
+    if icon is not None:
+        root.iconphoto(True, icon)
     App(root)
     root.mainloop()

@@ -5,7 +5,8 @@ import sys
 
 NAME = "OpenDecoDesk Machine Files"
 
-a = Analysis(["run.py"], pathex=["."])
+# icons/icon.png is the window's own icon (app.py); the .icns / .ico are the app's.
+a = Analysis(["run.py"], pathex=["."], datas=[("icons/icon.png", "icons")])
 pyz = PYZ(a.pure)
 
 if sys.platform == "darwin":
@@ -14,6 +15,7 @@ if sys.platform == "darwin":
     app = BUNDLE(
         coll,
         name=NAME + ".app",
+        icon="icons/icon.icns",
         bundle_identifier="org.opendecodesk.machinefiles",
         info_plist={
             # macOS asks before an app talks to devices on the local network; this is the reason shown.
@@ -23,4 +25,4 @@ if sys.platform == "darwin":
         },
     )
 else:
-    exe = EXE(pyz, a.scripts, a.binaries, a.datas, [], name=NAME, console=False)
+    exe = EXE(pyz, a.scripts, a.binaries, a.datas, [], name=NAME, console=False, icon="icons/icon.ico")
